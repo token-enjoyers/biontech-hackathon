@@ -24,6 +24,11 @@ class TrialDetail(TrialSummary):
     study_type: str | None = None
     conditions: list[str] = []
     why_stopped: str | None = None
+    facility_names: list[str] = []
+    facility_cities: list[str] = []
+    facility_states: list[str] = []
+    location_countries: list[str] = []
+    overall_officials: list[str] = []
 
 
 class TrialTimeline(BaseModel):

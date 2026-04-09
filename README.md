@@ -27,6 +27,25 @@ Implemented MCP tools today:
 - `get_trial_details`
 - `get_trial_timelines`
 - `search_publications`
+- `search_preprints`
+- `search_approved_drugs`
+- `compare_trials`
+- `get_trial_density`
+- `find_whitespaces`
+- `competitive_landscape`
+- `get_recruitment_velocity`
+- `suggest_trial_design`
+- `suggest_patient_profile`
+- `benchmark_trial_design`
+- `benchmark_eligibility_criteria`
+- `benchmark_endpoints`
+- `link_trial_evidence`
+- `analyze_patient_segments`
+- `forecast_readouts`
+- `track_competitor_assets`
+- `summarize_safety_signals`
+- `investigator_site_landscape`
+- `watch_indication_signals`
 
 ## Architecture
 
@@ -40,18 +59,25 @@ src/Medical_Wizard_MCP/
 │   ├── base.py
 │   ├── registry.py
 │   ├── clinicaltrials.py
-│   └── pubmed.py
+│   ├── pubmed.py
+│   ├── medrxiv.py
+│   └── openfda.py
 └── tools/
     ├── __init__.py
     ├── search.py
     ├── timelines.py
     ├── publications.py
-    └── analytics.py
+    ├── drugs.py
+    ├── intelligence.py
+    ├── _intelligence.py
+    └── _responses.py
 
 tests/
 ├── conftest.py
+├── test_intelligence_tools.py
 ├── test_pubmed.py
-└── test_pubmed_live.py
+├── test_pubmed_live.py
+└── test_tool_responses.py
 ```
 
 ### Runtime Flow
@@ -536,20 +562,8 @@ Retrieve already approved therapies per indication from OpenFDA.
 
 ---
 
-#### `search_international_trials`
-
-Find international trials invisible on ClinicalTrials.gov, especially
-from China (ChiCTR) and EU registries.
-
-**Input:** `condition`, `country?`
-
-**Output:** `Trial[]` (same schema as `search_trials`)
-
-**Source:** `who_ictrp.py`
-
-**Example questions:**
-- "What are Chinese companies doing in GBM?"
-- "Are there EU trials we are not seeing on CT.gov?"
+`search_international_trials` remains a roadmap item. It is not implemented in
+the current codebase yet.
 
 ---
 
@@ -655,24 +669,184 @@ and `search_publications`
 
 ---
 
+### Stufe 5 – Portfolio and Evidence Intelligence
+
+#### `benchmark_trial_design`
+
+Benchmark common design archetypes for similar trials.
+
+**Input:** `indication`, `phase?`, `mechanism?`, `sponsor?`
+
+**Output:** sample size, enrollment benchmark, study types, design archetypes,
+therapy models, primary and secondary endpoint categories, biomarker segments,
+comparator signals, reference trials.
+
+**Example questions:**
+- "How are Phase 2 NSCLC mRNA studies typically designed?"
+- "What does competitor trial design look like for Merck in NSCLC?"
+
+---
+
+#### `benchmark_eligibility_criteria`
+
+Extract recurring inclusion, exclusion, and biomarker rules from comparable trials.
+
+**Input:** `indication`, `phase?`, `mechanism?`
+
+**Output:** common inclusion criteria, exclusion criteria, biomarker criteria,
+CNS policy patterns, reference trials.
+
+**Example questions:**
+- "Which eligibility criteria are common in Phase 2 NSCLC trials?"
+- "How restrictive are competitor trials around autoimmune disease or CNS mets?"
+
+---
+
+#### `benchmark_endpoints`
+
+Benchmark which endpoints are most often used in similar trials.
+
+**Input:** `indication`, `phase?`, `mechanism?`
+
+**Output:** categorized primary and secondary endpoints plus representative examples.
+
+**Example questions:**
+- "Which primary endpoints are most common in Phase 2 GBM?"
+- "How often do NSCLC studies use ORR versus PFS?"
+
+---
+
+#### `link_trial_evidence`
+
+Link one NCT trial to supporting publications, preprints, and approved-drug context.
+
+**Input:** `nct_id`, `include_preprints?`, `include_approvals?`
+
+**Output:** trial context, queries used, linked PubMed papers, linked medRxiv preprints,
+related approved therapies, evidence counts.
+
+**Example questions:**
+- "Show me the evidence chain around NCT04179552"
+- "Which publications or labels are relevant to this trial?"
+
+---
+
+#### `analyze_patient_segments`
+
+Identify biomarker, line-of-therapy, and stage-defined patient segments in an indication.
+
+**Input:** `indication`, `phase?`, `mechanism?`
+
+**Output:** crowded segments, underserved segments, biomarker segments,
+line-of-therapy segments, disease-stage segments, reference trials.
+
+**Example questions:**
+- "Which patient segments in NSCLC look crowded or underserved?"
+- "Where are biomarker-defined whitespace opportunities?"
+
+---
+
+#### `forecast_readouts`
+
+Forecast upcoming known and estimated readouts from timeline signals.
+
+**Input:** `indication`, `phase?`, `sponsor?`, `months_ahead?`
+
+**Output:** phase-duration benchmarks and a forecast table with known or estimated
+readout dates, confidence, and basis.
+
+**Example questions:**
+- "Which NSCLC trials may read out in the next 18 months?"
+- "What is the likely readout window for Merck's Phase 2 activity?"
+
+---
+
+#### `track_competitor_assets`
+
+Group interventions into sponsor-level asset views for pipeline tracking.
+
+**Input:** `indication`, `sponsors?`, `mechanism?`
+
+**Output:** sponsor, asset, trial count, phases, furthest phase, statuses,
+mechanism tags, NCT IDs.
+
+**Example questions:**
+- "Which assets are Merck and Pfizer advancing in NSCLC?"
+- "What does the competitor asset map look like in lung cancer?"
+
+---
+
+#### `summarize_safety_signals`
+
+Surface recurring safety terms from publications, preprints, and approved labels.
+
+**Input:** `indication`, `mechanism?`, `year_from?`
+
+**Output:** recurring safety signals, example evidence, counts by source.
+
+**Example questions:**
+- "What safety themes recur around mRNA combinations in NSCLC?"
+- "Which adverse events should we watch for in this space?"
+
+---
+
+#### `investigator_site_landscape`
+
+Summarize visible site geography and study-official metadata for active trials.
+
+**Input:** `indication`, `phase?`, `sponsor?`
+
+**Output:** countries, facilities, visible study officials, reference trials.
+
+**Example questions:**
+- "Where are recruiting NSCLC trials concentrated geographically?"
+- "Which visible officials and sites show up repeatedly in this indication?"
+
+---
+
+#### `watch_indication_signals`
+
+Create a watchlist snapshot across trials, publications, preprints, approvals,
+and upcoming readouts.
+
+**Input:** `indication`, `mechanism?`, `sponsor?`, `recent_years?`, `months_ahead?`
+
+**Output:** trial activity, recent starts, upcoming readouts, publication activity,
+preprint activity, approved landscape.
+
+**Example questions:**
+- "Give me a current watchlist for NSCLC mRNA activity"
+- "What fresh signals should BioNTech R&D monitor in this indication?"
+
+---
+
 ### Complete Tool Overview
 
 | Tool | Stufe | Source | Key Question Addressed |
 |------|-------|--------|----------------------|
 | `search_trials` | 0 | clinicaltrials | Q1: Phase 3 trials per indication |
 | `get_trial_details` | 0 | clinicaltrials | Q3: Trial design details |
-| `get_trial_timeline` | 0 | clinicaltrials | Q2: Market authorization by 2030 |
+| `get_trial_timelines` | 0 | clinicaltrials | Q2: Market authorization by 2030 |
 | `search_publications` | 0 | pubmed | Q3: Outcomes and results |
+| `search_preprints` | 3 | medrxiv | Q2: Emerging research signals |
+| `search_approved_drugs` | 3 | openfda | Q2: Existing approved therapies |
 | `compare_trials` | 0 | clinicaltrials | Q3: Side-by-side comparison |
 | `get_trial_density` | 0 | clinicaltrials | Q4: Foundation for whitespace |
 | `find_whitespaces` | 0 | clinicaltrials | Q4: Underserved segments |
 | `competitive_landscape` | 0 | clinicaltrials | Q1, Q4: Who is active where |
 | `get_recruitment_velocity` | 0 | clinicaltrials | Q5: Enrollment feasibility |
-| `search_approved_drugs` | 3 | openfda | Q2: Existing approved therapies |
-| `search_international_trials` | 3 | who_ictrp | Q1: Non-US competitors |
-| `search_preprints` | 3 | medrxiv | Q2: Emerging research signals |
 | `suggest_trial_design` | 4 | multi-source | Design intelligence |
 | `suggest_patient_profile` | 4 | multi-source | Recruitment intelligence |
+| `benchmark_trial_design` | 5 | clinicaltrials | Benchmark protocol archetypes |
+| `benchmark_eligibility_criteria` | 5 | clinicaltrials | Benchmark inclusion and exclusion logic |
+| `benchmark_endpoints` | 5 | clinicaltrials | Benchmark endpoint strategy |
+| `link_trial_evidence` | 5 | multi-source | Connect trial to literature and labels |
+| `analyze_patient_segments` | 5 | clinicaltrials | Segment-level crowding and whitespace |
+| `forecast_readouts` | 5 | clinicaltrials | Estimate near-term readout windows |
+| `track_competitor_assets` | 5 | clinicaltrials | Track sponsor assets and phases |
+| `summarize_safety_signals` | 5 | multi-source | Summarize recurring safety themes |
+| `investigator_site_landscape` | 5 | clinicaltrials | Inspect site and official footprint |
+| `watch_indication_signals` | 5 | multi-source | Watchlist snapshot for recurring monitoring |
 
 ---
 
@@ -899,9 +1073,9 @@ python -m pytest tests/test_pubmed_live.py -s
 
 ### Stufe 0 – Hackathon MVP (current)
 
-9 atomic tools. Claude orchestrates all analysis.
-Walking skeleton proves the LLM-first concept.
-No database, no frontend, no caching.
+The current server exposes 23 MCP tools across trial search, publications,
+benchmarking, evidence linking, competitive tracking, and watchlist workflows.
+The architecture remains LLM-first with no database, frontend, or caching layer.
 
 ### Stufe 1 – Visualization Layer
 

@@ -2,16 +2,26 @@ from __future__ import annotations
 
 import pytest
 
-from Medical_Wizard_MCP.models import Publication, TrialDetail, TrialSummary, TrialTimeline
+from Medical_Wizard_MCP.models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult
 from Medical_Wizard_MCP.tools.intelligence import (
+    analyze_patient_segments,
+    benchmark_eligibility_criteria,
+    benchmark_endpoints,
+    benchmark_trial_design,
     compare_trials,
     competitive_landscape,
+    forecast_readouts,
     find_whitespaces,
     get_recruitment_velocity,
     get_trial_density,
+    investigator_site_landscape,
+    link_trial_evidence,
     suggest_patient_profile,
     suggest_trial_design,
+    summarize_safety_signals,
+    track_competitor_assets,
+    watch_indication_signals,
 )
 from Medical_Wizard_MCP.tools.timelines import get_trial_timelines
 
@@ -27,8 +37,8 @@ TRIAL_A = TrialSummary(
     primary_outcomes=["Objective response rate"],
     enrollment_count=120,
     start_date="2024-01-01",
-    primary_completion_date="2025-06-01",
-    completion_date="2025-12-01",
+    primary_completion_date="2027-06-01",
+    completion_date="2027-12-01",
 )
 
 TRIAL_B = TrialSummary(
@@ -64,32 +74,47 @@ TRIAL_C = TrialSummary(
 DETAIL_A = TrialDetail(
     **TRIAL_A.model_dump(),
     official_title="A randomized Phase 2 study of mRNA vaccine plus pembrolizumab in NSCLC",
-    eligibility_criteria="Adults 18+; ECOG 0-1; TMB-high; measurable disease.",
-    arms=["Combination arm"],
+    eligibility_criteria="Adults 18+; ECOG 0-1; TMB-high; measurable disease; adequate organ function. Exclusion: active autoimmune disease; untreated CNS metastases.",
+    arms=["Combination arm", "Standard of care arm"],
     secondary_outcomes=["Progression-free survival"],
     study_type="INTERVENTIONAL",
     conditions=["NSCLC"],
+    facility_names=["Charite", "Mayo Clinic"],
+    facility_cities=["Berlin", "Rochester"],
+    facility_states=["Berlin", "Minnesota"],
+    location_countries=["Germany", "United States"],
+    overall_officials=["Dr. Alice Smith"],
 )
 
 DETAIL_B = TrialDetail(
     **TRIAL_B.model_dump(),
     official_title="A Phase 1 study of mRNA vaccine in NSCLC",
-    eligibility_criteria="Adults 18+; ECOG 0-1; measurable disease.",
+    eligibility_criteria="Adults 18+; ECOG 0-1; measurable disease; relapsed or refractory disease after prior therapy.",
     arms=["Monotherapy arm"],
     secondary_outcomes=["Overall survival"],
     study_type="INTERVENTIONAL",
     conditions=["NSCLC"],
+    facility_names=["University Hospital Cologne"],
+    facility_cities=["Cologne"],
+    facility_states=["North Rhine-Westphalia"],
+    location_countries=["Germany"],
+    overall_officials=["Dr. Bob Jones"],
 )
 
 DETAIL_C = TrialDetail(
     **TRIAL_C.model_dump(),
     official_title="A Phase 2 study of pembrolizumab monotherapy in NSCLC",
-    eligibility_criteria="Adults 18+; ECOG 0-1.",
+    eligibility_criteria="Adults 18+; ECOG 0-1; PD-L1 positive disease. Exclusion: prior checkpoint therapy.",
     arms=["Monotherapy arm"],
     secondary_outcomes=["Overall survival"],
     study_type="INTERVENTIONAL",
     conditions=["NSCLC"],
     why_stopped="Insufficient efficacy",
+    facility_names=["Mass General"],
+    facility_cities=["Boston"],
+    facility_states=["Massachusetts"],
+    location_countries=["United States"],
+    overall_officials=["Dr. Carol Lee"],
 )
 
 TIMELINE_A = TrialTimeline(
@@ -141,6 +166,33 @@ PUB_1 = Publication(
     abstract="TMB-high and PD-L1 positive NSCLC patients showed promising responses to mRNA vaccine combinations.",
     doi="10.1000/pub1",
     mesh_terms=["Lung Neoplasms", "mRNA Vaccines", "Tumor Mutational Burden"],
+)
+
+PREPRINT_1 = Publication(
+    source="medrxiv",
+    pmid=None,
+    title="Early safety signal for mRNA vaccine combinations in NSCLC",
+    authors=["Bob Miller"],
+    journal="medRxiv",
+    pub_date="2025-02-01",
+    abstract="Immune-related adverse events and fatigue were manageable in advanced NSCLC patients.",
+    doi="10.1101/2025.02.01.123456",
+    mesh_terms=["Cancer Biology"],
+)
+
+APPROVED_DRUG_1 = ApprovedDrug(
+    source="openfda",
+    approval_id="BLA123456",
+    brand_name="Keytruda",
+    generic_name="pembrolizumab",
+    indication="NSCLC",
+    sponsor="Merck",
+    route=["INTRAVENOUS"],
+    product_type="HUMAN PRESCRIPTION DRUG",
+    substance_names=["pembrolizumab"],
+    mechanism_of_action="PD-1 inhibitor",
+    warnings="Immune-mediated pneumonitis and colitis may occur.",
+    adverse_reactions="Fatigue, rash, infusion-related reactions.",
 )
 
 
@@ -270,3 +322,63 @@ async def test_design_tools_return_recommendations(monkeypatch: pytest.MonkeyPat
     assert patient_profile["result"]["recommended_ecog"] == "0-1"
     assert patient_profile["result"]["based_on_trials"] >= 1
     assert patient_profile["result"]["predictive_biomarkers"]
+
+
+@pytest.mark.asyncio
+async def test_extended_intelligence_tools_return_expected_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_search_trials(**kwargs: object) -> ListQueryResult[TrialSummary]:
+        sponsor = kwargs.get("sponsor")
+        items = _filter_trials(
+            status=kwargs.get("status") if isinstance(kwargs.get("status"), str) else None,
+            phase=kwargs.get("phase") if isinstance(kwargs.get("phase"), str) else None,
+            intervention=kwargs.get("intervention") if isinstance(kwargs.get("intervention"), str) else None,
+        )
+        if isinstance(sponsor, str):
+            items = [trial for trial in items if sponsor.lower() in trial.lead_sponsor.lower()]
+        return ListQueryResult(queried_sources=["clinicaltrials_gov"], warnings=[], items=items)
+
+    async def fake_get_trial_details(nct_id: str) -> DetailQueryResult[TrialDetail]:
+        detail_map = {
+            DETAIL_A.nct_id: DETAIL_A,
+            DETAIL_B.nct_id: DETAIL_B,
+            DETAIL_C.nct_id: DETAIL_C,
+        }
+        return DetailQueryResult(item=detail_map.get(nct_id), queried_sources=["clinicaltrials_gov"], warnings=[])
+
+    async def fake_search_publications(**_: object) -> ListQueryResult[Publication]:
+        return ListQueryResult(queried_sources=["pubmed"], warnings=[], items=[PUB_1])
+
+    async def fake_search_preprints(**_: object) -> ListQueryResult[Publication]:
+        return ListQueryResult(queried_sources=["medrxiv"], warnings=[], items=[PREPRINT_1])
+
+    async def fake_search_approved_drugs(**_: object) -> ListQueryResult[ApprovedDrug]:
+        return ListQueryResult(queried_sources=["openfda"], warnings=[], items=[APPROVED_DRUG_1])
+
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_trials", fake_search_trials)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.get_trial_details", fake_get_trial_details)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_publications", fake_search_publications)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_preprints", fake_search_preprints)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_approved_drugs", fake_search_approved_drugs)
+
+    design_benchmark = await benchmark_trial_design(indication="NSCLC", mechanism="mRNA vaccine")
+    eligibility = await benchmark_eligibility_criteria(indication="NSCLC")
+    endpoints = await benchmark_endpoints(indication="NSCLC")
+    evidence = await link_trial_evidence(nct_id="NCT00000111")
+    segments = await analyze_patient_segments(indication="NSCLC")
+    readouts = await forecast_readouts(indication="NSCLC", months_ahead=60)
+    assets = await track_competitor_assets(indication="NSCLC")
+    safety = await summarize_safety_signals(indication="NSCLC", mechanism="mRNA vaccine")
+    sites = await investigator_site_landscape(indication="NSCLC")
+    signals = await watch_indication_signals(indication="NSCLC", mechanism="mRNA vaccine")
+
+    assert design_benchmark["result"]["sample_size"] >= 1
+    assert design_benchmark["result"]["primary_endpoint_categories"]
+    assert eligibility["result"]["common_inclusion_criteria"]
+    assert endpoints["result"]["primary_endpoint_categories"]
+    assert evidence["result"]["evidence_summary"]["publication_count"] == 1
+    assert segments["result"]["biomarker_segments"]
+    assert readouts["result"]["forecast"]
+    assert assets["result"]["assets"]
+    assert safety["result"]["signals"]
+    assert sites["result"]["countries"]
+    assert signals["result"]["trial_activity"]["upcoming_readouts"]

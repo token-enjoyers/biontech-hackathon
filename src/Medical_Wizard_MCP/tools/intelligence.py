@@ -2,21 +2,30 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter, defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
 from ..models import TrialDetail, TrialSummary
 from ..server import mcp
 from ..sources import registry
 from ._intelligence import (
+    ACTIVE_STATUSES,
+    add_months_to_date,
     TERMINAL_STATUSES,
+    classify_endpoint,
     classify_mechanisms,
+    extract_comparator_signals,
     extract_biomarkers,
+    extract_eligibility_features,
+    extract_patient_segments,
+    extract_safety_signals,
     furthest_phase,
     infer_primary_endpoint,
     infer_signal_strength,
     median_enrollment,
     months_between,
     months_since,
+    months_until,
     phase_code,
     phase_rank,
     sponsor_saturation_score,
@@ -128,6 +137,154 @@ async def _fetch_details(nct_ids: list[str]) -> tuple[list[TrialDetail], list[di
                 }
             )
     return details, warnings, sorted(set(queried_sources))
+
+
+async def _collect_trials_and_details(
+    *,
+    indication: str,
+    phase: str | None = None,
+    status: str | None = None,
+    sponsor: str | None = None,
+    mechanism: str | None = None,
+    max_results: int = ANALYSIS_MAX_RESULTS,
+    detail_limit: int = DETAIL_SAMPLE_SIZE * 2,
+) -> tuple[list[TrialSummary], list[TrialDetail], list[dict[str, str]], list[str]]:
+    response = await registry.search_trials(
+        condition=indication,
+        phase=phase,
+        status=status,
+        sponsor=sponsor,
+        intervention=mechanism,
+        max_results=max_results,
+    )
+    details, detail_warnings, detail_sources = await _fetch_details(
+        [trial.nct_id for trial in response.items[:detail_limit]]
+    )
+    warnings = _warning_dicts(response.warnings, detail_warnings)
+    queried_sources = sorted(set(response.queried_sources + detail_sources))
+    return response.items, details, warnings, queried_sources
+
+
+def _merged_trial_text(trial: TrialSummary | TrialDetail) -> str:
+    parts = [
+        trial.brief_title,
+        getattr(trial, "official_title", None),
+        " ".join(getattr(trial, "conditions", [])),
+        getattr(trial, "eligibility_criteria", None),
+        " ".join(trial.interventions),
+        " ".join(trial.primary_outcomes),
+        " ".join(getattr(trial, "secondary_outcomes", [])),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def _top_counter_rows(counter: Counter[str], limit: int = 10) -> list[dict[str, Any]]:
+    return [
+        {"label": label, "count": count}
+        for label, count in counter.most_common(limit)
+    ]
+
+
+def _intelligence_year_floor(recent_years: int) -> int:
+    current_year = datetime.now(UTC).year
+    return current_year - max(recent_years - 1, 0)
+
+
+def _normalize_asset_name(intervention: str) -> str:
+    value = intervention.strip()
+    if not value:
+        return "Unknown asset"
+    lowered = value.lower()
+    if lowered in {"placebo", "standard of care", "best supportive care"}:
+        return ""
+    return value
+
+
+def _design_archetype(detail: TrialDetail) -> str:
+    arm_count = len(detail.arms)
+    intervention_count = len(detail.interventions)
+    if intervention_count >= 2:
+        combo_label = "combination"
+    elif intervention_count == 1:
+        combo_label = "monotherapy"
+    else:
+        combo_label = "unspecified therapy model"
+
+    if arm_count >= 3:
+        arm_label = "multi-arm"
+    elif arm_count == 2:
+        arm_label = "two-arm"
+    elif arm_count == 1:
+        arm_label = "single-arm"
+    else:
+        arm_label = "arm structure unspecified"
+
+    return f"{arm_label} {combo_label}"
+
+
+def _forecast_rows_from_trials(
+    trials: list[TrialSummary],
+    *,
+    months_ahead: int,
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    phase_benchmarks: dict[str, list[float]] = defaultdict(list)
+    for trial in trials:
+        duration = months_between(trial.start_date, trial.primary_completion_date)
+        code = phase_code(trial.phase)
+        if duration is not None and code:
+            phase_benchmarks[code].append(duration)
+
+    benchmark_medians = {
+        phase_name: round(sum(values) / len(values), 1)
+        for phase_name, values in phase_benchmarks.items()
+        if values
+    }
+    fallback_months = {"PHASE1": 18, "PHASE1/PHASE2": 24, "PHASE2": 30, "PHASE2/PHASE3": 36, "PHASE3": 42}
+
+    rows: list[dict[str, Any]] = []
+    for trial in trials:
+        known_date = trial.primary_completion_date or trial.completion_date
+        months_to_known = months_until(known_date)
+        code = phase_code(trial.phase)
+
+        estimated_date = None
+        confidence = "LOW"
+        basis = "No forecast basis available."
+        if known_date:
+            estimated_date = known_date
+            confidence = "HIGH"
+            basis = "Uses the registered primary/completion date."
+        elif code and trial.start_date:
+            estimate_months = int(round(benchmark_medians.get(code, fallback_months.get(code, 30))))
+            estimated_date = add_months_to_date(trial.start_date, estimate_months)
+            confidence = "MEDIUM" if code in benchmark_medians else "LOW"
+            basis = "Estimated from observed phase benchmark duration." if code in benchmark_medians else "Estimated from fallback phase duration."
+
+        months_to_estimated = months_until(estimated_date)
+        if (
+            estimated_date is None
+            or months_to_estimated is None
+            or months_to_estimated < 0
+            or months_to_estimated > months_ahead
+        ):
+            continue
+
+        rows.append(
+            {
+                "nct_id": trial.nct_id,
+                "sponsor": trial.lead_sponsor,
+                "phase": code,
+                "status": trial.overall_status,
+                "known_primary_completion_date": known_date,
+                "estimated_readout_date": estimated_date,
+                "months_until_readout": months_to_estimated,
+                "forecast_confidence": confidence,
+                "forecast_basis": basis,
+            }
+        )
+
+    rows.sort(key=lambda item: (item["months_until_readout"], item["nct_id"]))
+    return rows, benchmark_medians
 
 
 @mcp.tool()
@@ -484,6 +641,9 @@ async def suggest_trial_design(
     queried_sources = sorted(set(candidate_trials.queried_sources + publication_response.queried_sources + detail_sources))
 
     max_phase_rank = max((phase_rank(trial.phase) for trial in candidate_trials.items), default=-1)
+    active_mechanism_trials = [
+        trial for trial in candidate_trials.items if trial.overall_status in ACTIVE_STATUSES
+    ]
     if max_phase_rank >= phase_rank("PHASE 2"):
         recommended_phase = "PHASE2"
     elif publication_response.items or active_mechanism_trials:
@@ -656,4 +816,716 @@ async def suggest_patient_profile(
         queried_sources=queried_sources,
         warnings=warnings,
         requested_filters={"indication": indication, "mechanism": mechanism, "biomarker": biomarker},
+    )
+
+
+@mcp.tool()
+async def benchmark_trial_design(
+    indication: str,
+    phase: str | None = None,
+    mechanism: str | None = None,
+    sponsor: str | None = None,
+) -> dict[str, Any]:
+    """Benchmark common trial-design patterns for an indication and optional mechanism."""
+    _, details, warnings, queried_sources = await _collect_trials_and_details(
+        indication=indication,
+        phase=phase,
+        sponsor=sponsor,
+        mechanism=mechanism,
+    )
+
+    primary_counter: Counter[str] = Counter()
+    secondary_counter: Counter[str] = Counter()
+    archetype_counter: Counter[str] = Counter()
+    study_type_counter: Counter[str] = Counter()
+    biomarker_counter: Counter[str] = Counter()
+    combination_counter: Counter[str] = Counter()
+    comparator_counter: Counter[str] = Counter()
+    enrollments: list[int | None] = []
+
+    for detail in details:
+        archetype_counter[_design_archetype(detail)] += 1
+        if detail.study_type:
+            study_type_counter[detail.study_type] += 1
+        enrollments.append(detail.enrollment_count)
+
+        for endpoint in detail.primary_outcomes:
+            primary_counter[classify_endpoint(endpoint)] += 1
+        for endpoint in detail.secondary_outcomes:
+            secondary_counter[classify_endpoint(endpoint)] += 1
+        for biomarker in _trial_biomarkers(detail):
+            biomarker_counter[biomarker] += 1
+        for comparator in extract_comparator_signals(
+            detail.official_title,
+            detail.brief_title,
+            " ".join(detail.arms),
+            " ".join(detail.interventions),
+        ):
+            comparator_counter[comparator] += 1
+
+        if len(detail.interventions) >= 2:
+            combination_counter["combination therapy"] += 1
+        elif len(detail.interventions) == 1:
+            combination_counter["monotherapy"] += 1
+        else:
+            combination_counter["therapy model unspecified"] += 1
+
+    enrollment_values = [value for value in enrollments if isinstance(value, int) and value > 0]
+    result = {
+        "indication": indication,
+        "phase_filter": phase,
+        "mechanism_filter": mechanism,
+        "sponsor_filter": sponsor,
+        "sample_size": len(details),
+        "enrollment_benchmark": {
+            "median": median_enrollment(enrollments, fallback=0) if details else None,
+            "min": min(enrollment_values) if enrollment_values else None,
+            "max": max(enrollment_values) if enrollment_values else None,
+        },
+        "study_types": _top_counter_rows(study_type_counter, limit=5),
+        "design_archetypes": _top_counter_rows(archetype_counter, limit=5),
+        "therapy_models": _top_counter_rows(combination_counter, limit=5),
+        "primary_endpoint_categories": _top_counter_rows(primary_counter, limit=6),
+        "secondary_endpoint_categories": _top_counter_rows(secondary_counter, limit=6),
+        "biomarker_segments": _top_counter_rows(biomarker_counter, limit=6),
+        "comparator_signals": _top_counter_rows(comparator_counter, limit=6),
+        "reference_trials": [detail.nct_id for detail in details[:8]],
+    }
+
+    return detail_response(
+        tool_name="benchmark_trial_design",
+        data_type="trial_design_benchmark",
+        item=result,
+        quality_note="Design benchmark aggregates normalized trial detail fields and lightweight heuristics across a comparable trial sample.",
+        coverage="ClinicalTrials.gov detail records for the requested indication and optional filters.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism, "sponsor": sponsor},
+    )
+
+
+@mcp.tool()
+async def benchmark_eligibility_criteria(
+    indication: str,
+    phase: str | None = None,
+    mechanism: str | None = None,
+) -> dict[str, Any]:
+    """Benchmark recurring inclusion, exclusion, and biomarker criteria."""
+    _, details, warnings, queried_sources = await _collect_trials_and_details(
+        indication=indication,
+        phase=phase,
+        mechanism=mechanism,
+    )
+
+    inclusion_counter: Counter[str] = Counter()
+    exclusion_counter: Counter[str] = Counter()
+    biomarker_counter: Counter[str] = Counter()
+    cns_policy_counter: Counter[str] = Counter()
+
+    for detail in details:
+        inclusions, exclusions = extract_eligibility_features(detail.eligibility_criteria)
+        for criterion in inclusions:
+            inclusion_counter[criterion] += 1
+        for criterion in exclusions:
+            exclusion_counter[criterion] += 1
+        for biomarker in _trial_biomarkers(detail):
+            biomarker_counter[biomarker] += 1
+
+        criteria_text = (detail.eligibility_criteria or "").lower()
+        if "untreated cns" in criteria_text or "untreated brain" in criteria_text:
+            cns_policy_counter["exclude untreated CNS disease"] += 1
+        elif "cns" in criteria_text or "brain metast" in criteria_text:
+            cns_policy_counter["CNS disease addressed case-by-case"] += 1
+        else:
+            cns_policy_counter["no explicit CNS rule captured"] += 1
+
+    result = {
+        "indication": indication,
+        "phase_filter": phase,
+        "mechanism_filter": mechanism,
+        "sample_size": len(details),
+        "common_inclusion_criteria": _top_counter_rows(inclusion_counter, limit=8),
+        "common_exclusion_criteria": _top_counter_rows(exclusion_counter, limit=8),
+        "biomarker_criteria": _top_counter_rows(biomarker_counter, limit=6),
+        "cns_policy_patterns": _top_counter_rows(cns_policy_counter, limit=4),
+        "reference_trials": [detail.nct_id for detail in details[:8]],
+    }
+
+    return detail_response(
+        tool_name="benchmark_eligibility_criteria",
+        data_type="eligibility_benchmark",
+        item=result,
+        quality_note="Eligibility benchmark is extracted heuristically from normalized free-text inclusion and exclusion criteria.",
+        coverage="ClinicalTrials.gov trial detail records with published eligibility text.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
+    )
+
+
+@mcp.tool()
+async def benchmark_endpoints(
+    indication: str,
+    phase: str | None = None,
+    mechanism: str | None = None,
+) -> dict[str, Any]:
+    """Benchmark primary and secondary endpoint usage in similar trials."""
+    _, details, warnings, queried_sources = await _collect_trials_and_details(
+        indication=indication,
+        phase=phase,
+        mechanism=mechanism,
+    )
+
+    primary_counter: Counter[str] = Counter()
+    secondary_counter: Counter[str] = Counter()
+    primary_examples: dict[str, list[str]] = defaultdict(list)
+    secondary_examples: dict[str, list[str]] = defaultdict(list)
+
+    for detail in details:
+        for endpoint in detail.primary_outcomes:
+            category = classify_endpoint(endpoint)
+            primary_counter[category] += 1
+            if endpoint and len(primary_examples[category]) < 3:
+                primary_examples[category].append(endpoint)
+        for endpoint in detail.secondary_outcomes:
+            category = classify_endpoint(endpoint)
+            secondary_counter[category] += 1
+            if endpoint and len(secondary_examples[category]) < 3:
+                secondary_examples[category].append(endpoint)
+
+    result = {
+        "indication": indication,
+        "phase_filter": phase,
+        "mechanism_filter": mechanism,
+        "sample_size": len(details),
+        "primary_endpoint_categories": [
+            {"category": label, "count": count, "examples": primary_examples.get(label, [])}
+            for label, count in primary_counter.most_common(8)
+        ],
+        "secondary_endpoint_categories": [
+            {"category": label, "count": count, "examples": secondary_examples.get(label, [])}
+            for label, count in secondary_counter.most_common(8)
+        ],
+        "reference_trials": [detail.nct_id for detail in details[:8]],
+    }
+
+    return detail_response(
+        tool_name="benchmark_endpoints",
+        data_type="endpoint_benchmark",
+        item=result,
+        quality_note="Endpoint benchmark groups normalized endpoint text into high-level categories for fast design comparison.",
+        coverage="ClinicalTrials.gov trial detail records with published primary and secondary outcomes.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
+    )
+
+
+@mcp.tool()
+async def link_trial_evidence(
+    nct_id: str,
+    include_preprints: bool = True,
+    include_approvals: bool = True,
+) -> dict[str, Any]:
+    """Link a trial to related publications, preprints, and approved-drug context."""
+    detail = await registry.get_trial_details(nct_id)
+    if detail.item is None:
+        return detail_response(
+            tool_name="link_trial_evidence",
+            data_type="trial_evidence_links",
+            item=None,
+            quality_note="Trial evidence linking requires a resolvable ClinicalTrials.gov NCT identifier.",
+            coverage="ClinicalTrials.gov, PubMed, medRxiv, and OpenFDA where available.",
+            missing_message=f"No trial found with ID {nct_id}",
+            queried_sources=detail.queried_sources,
+            warnings=_warning_dicts(detail.warnings),
+            requested_filters={"nct_id": nct_id, "include_preprints": include_preprints, "include_approvals": include_approvals},
+        )
+
+    trial = detail.item
+    condition_hint = trial.conditions[0] if trial.conditions else ""
+    intervention_hint = trial.interventions[0] if trial.interventions else ""
+    publication_query = " ".join(part for part in [nct_id, intervention_hint, condition_hint] if part)
+    preprint_query = " ".join(part for part in [intervention_hint, condition_hint] if part)
+
+    publication_response = await registry.search_publications(
+        query=publication_query or nct_id,
+        max_results=6,
+        year_from=2018,
+    )
+    warnings = _warning_dicts(detail.warnings, publication_response.warnings)
+    queried_sources = sorted(set(detail.queried_sources + publication_response.queried_sources))
+
+    preprint_items = []
+    if include_preprints:
+        preprint_response = await registry.search_preprints(
+            query=preprint_query or publication_query or nct_id,
+            max_results=4,
+            year_from=2022,
+        )
+        preprint_items = [item.model_dump() for item in preprint_response.items]
+        warnings.extend(_warning_dicts(preprint_response.warnings))
+        queried_sources = sorted(set(queried_sources + preprint_response.queried_sources))
+
+    approval_items = []
+    if include_approvals and condition_hint:
+        approval_response = await registry.search_approved_drugs(
+            indication=condition_hint,
+            intervention=intervention_hint or None,
+            max_results=5,
+        )
+        approval_items = [item.model_dump() for item in approval_response.items]
+        warnings.extend(_warning_dicts(approval_response.warnings))
+        queried_sources = sorted(set(queried_sources + approval_response.queried_sources))
+
+    result = {
+        "trial": {
+            "nct_id": trial.nct_id,
+            "brief_title": trial.brief_title,
+            "phase": phase_code(trial.phase),
+            "status": trial.overall_status,
+            "sponsor": trial.lead_sponsor,
+            "conditions": trial.conditions,
+            "interventions": trial.interventions,
+        },
+        "queries_used": {
+            "publications": publication_query or nct_id,
+            "preprints": preprint_query or publication_query or nct_id,
+            "approvals": {"indication": condition_hint, "intervention": intervention_hint or None},
+        },
+        "linked_publications": [item.model_dump() for item in publication_response.items],
+        "linked_preprints": preprint_items,
+        "related_approvals": approval_items,
+        "evidence_summary": {
+            "publication_count": len(publication_response.items),
+            "preprint_count": len(preprint_items),
+            "approval_count": len(approval_items),
+        },
+    }
+
+    return detail_response(
+        tool_name="link_trial_evidence",
+        data_type="trial_evidence_links",
+        item=result,
+        quality_note="Evidence links are query-based associations intended to speed up evidence gathering, not to prove a definitive one-to-one linkage.",
+        coverage="ClinicalTrials.gov detail data plus PubMed, medRxiv, and OpenFDA queries derived from the trial context.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"nct_id": nct_id, "include_preprints": include_preprints, "include_approvals": include_approvals},
+    )
+
+
+@mcp.tool()
+async def analyze_patient_segments(
+    indication: str,
+    phase: str | None = None,
+    mechanism: str | None = None,
+) -> dict[str, Any]:
+    """Analyze biomarker and line-of-therapy patient segments in an indication."""
+    _, details, warnings, queried_sources = await _collect_trials_and_details(
+        indication=indication,
+        phase=phase,
+        mechanism=mechanism,
+    )
+
+    segment_counter: Counter[str] = Counter()
+    biomarker_counter: Counter[str] = Counter()
+    line_counter: Counter[str] = Counter()
+    stage_counter: Counter[str] = Counter()
+
+    for detail in details:
+        segments = extract_patient_segments(_merged_trial_text(detail))
+        for segment in segments:
+            segment_counter[segment] += 1
+            if segment in {"first-line", "second-line", "later-line", "maintenance"}:
+                line_counter[segment] += 1
+            elif segment in {"advanced / metastatic", "locally advanced / unresectable", "adjuvant", "neoadjuvant", "brain metastases"}:
+                stage_counter[segment] += 1
+            else:
+                biomarker_counter[segment] += 1
+
+    crowded_segments = [
+        {"segment": label, "trial_count": count}
+        for label, count in segment_counter.most_common(6)
+    ]
+    underserved_segments = [
+        {
+            "segment": label,
+            "trial_count": count,
+            "signal_strength": infer_signal_strength(count, 0),
+        }
+        for label, count in sorted(segment_counter.items(), key=lambda item: (item[1], item[0]))
+        if count <= 3
+    ][:6]
+
+    result = {
+        "indication": indication,
+        "phase_filter": phase,
+        "mechanism_filter": mechanism,
+        "sample_size": len(details),
+        "crowded_segments": crowded_segments,
+        "underserved_segments": underserved_segments,
+        "biomarker_segments": _top_counter_rows(biomarker_counter, limit=8),
+        "line_of_therapy_segments": _top_counter_rows(line_counter, limit=6),
+        "disease_stage_segments": _top_counter_rows(stage_counter, limit=6),
+        "reference_trials": [detail.nct_id for detail in details[:8]],
+    }
+
+    return detail_response(
+        tool_name="analyze_patient_segments",
+        data_type="patient_segment_analysis",
+        item=result,
+        quality_note="Patient-segment analysis is based on heuristic extraction from trial titles, conditions, and eligibility text.",
+        coverage="ClinicalTrials.gov detail records for the requested indication and optional filters.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
+    )
+
+
+@mcp.tool()
+async def forecast_readouts(
+    indication: str,
+    phase: str | None = None,
+    sponsor: str | None = None,
+    months_ahead: int = 24,
+) -> dict[str, Any]:
+    """Forecast upcoming known and estimated trial readouts for an indication."""
+    response = await registry.search_trials(
+        condition=indication,
+        phase=phase,
+        sponsor=sponsor,
+        max_results=ANALYSIS_MAX_RESULTS,
+    )
+    forecast_rows, benchmark_medians = _forecast_rows_from_trials(
+        response.items,
+        months_ahead=months_ahead,
+    )
+
+    result = {
+        "indication": indication,
+        "phase_filter": phase,
+        "sponsor_filter": sponsor,
+        "months_ahead": months_ahead,
+        "phase_duration_benchmarks_months": benchmark_medians,
+        "forecast": forecast_rows[:20],
+    }
+
+    return detail_response(
+        tool_name="forecast_readouts",
+        data_type="readout_forecast",
+        item=result,
+        quality_note="Readout forecast prefers registered completion dates and falls back to observed phase-level duration benchmarks when dates are missing.",
+        coverage="ClinicalTrials.gov timeline fields available through normalized trial-search results.",
+        queried_sources=response.queried_sources,
+        warnings=_warning_dicts(response.warnings),
+        requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor, "months_ahead": months_ahead},
+    )
+
+
+@mcp.tool()
+async def track_competitor_assets(
+    indication: str,
+    sponsors: list[str] | None = None,
+    mechanism: str | None = None,
+) -> dict[str, Any]:
+    """Track sponsor assets and pipeline activity within an indication."""
+    response = await registry.search_trials(
+        condition=indication,
+        intervention=mechanism,
+        max_results=ANALYSIS_MAX_RESULTS,
+    )
+    sponsor_filters = [item.lower() for item in sponsors or [] if item]
+
+    grouped_assets: dict[tuple[str, str], dict[str, Any]] = {}
+    for trial in response.items:
+        sponsor_name = trial.lead_sponsor or "Unknown"
+        if sponsor_filters and not any(filter_value in sponsor_name.lower() for filter_value in sponsor_filters):
+            continue
+
+        asset_names = [_normalize_asset_name(intervention_name) for intervention_name in trial.interventions]
+        asset_names = [asset for asset in asset_names if asset]
+        if not asset_names:
+            asset_names = [trial.brief_title]
+
+        for asset_name in asset_names[:3]:
+            key = (sponsor_name, asset_name)
+            if key not in grouped_assets:
+                grouped_assets[key] = {
+                    "sponsor": sponsor_name,
+                    "asset": asset_name,
+                    "trial_count": 0,
+                    "phases": set(),
+                    "statuses": set(),
+                    "mechanisms": set(),
+                    "nct_ids": [],
+                }
+            entry = grouped_assets[key]
+            entry["trial_count"] += 1
+            if trial.phase:
+                entry["phases"].add(phase_code(trial.phase))
+            entry["statuses"].add(trial.overall_status)
+            entry["mechanisms"].update(_trial_mechanisms(trial))
+            entry["nct_ids"].append(trial.nct_id)
+
+    assets = []
+    for entry in grouped_assets.values():
+        assets.append(
+            {
+                "sponsor": entry["sponsor"],
+                "asset": entry["asset"],
+                "trial_count": entry["trial_count"],
+                "phases": sorted(entry["phases"], key=phase_rank),
+                "furthest_phase": furthest_phase(sorted(entry["phases"], key=phase_rank)),
+                "statuses": sorted(entry["statuses"]),
+                "mechanisms": sorted(entry["mechanisms"]),
+                "nct_ids": unique_nonempty(entry["nct_ids"])[:8],
+            }
+        )
+
+    assets.sort(key=lambda item: (-item["trial_count"], item["sponsor"], item["asset"]))
+    result = {
+        "indication": indication,
+        "sponsor_filters": sponsors or [],
+        "mechanism_filter": mechanism,
+        "asset_count": len(assets),
+        "assets": assets[:25],
+    }
+
+    return detail_response(
+        tool_name="track_competitor_assets",
+        data_type="competitor_asset_tracking",
+        item=result,
+        quality_note="Asset tracking groups interventions under sponsors using normalized trial-search results and lightweight mechanism tagging.",
+        coverage="ClinicalTrials.gov trial-search records for the requested indication.",
+        queried_sources=response.queried_sources,
+        warnings=_warning_dicts(response.warnings),
+        requested_filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism},
+    )
+
+
+@mcp.tool()
+async def summarize_safety_signals(
+    indication: str,
+    mechanism: str | None = None,
+    year_from: int = 2019,
+) -> dict[str, Any]:
+    """Summarize recurring safety signals from publications, preprints, and labels."""
+    query = " ".join(part for part in [mechanism, indication, "safety adverse events toxicity"] if part)
+    publications = await registry.search_publications(
+        query=query,
+        max_results=8,
+        year_from=year_from,
+    )
+    preprints = await registry.search_preprints(
+        query=query,
+        max_results=5,
+        year_from=year_from,
+    )
+    approvals = await registry.search_approved_drugs(
+        indication=indication,
+        intervention=mechanism,
+        max_results=6,
+    )
+
+    warnings = _warning_dicts(publications.warnings, preprints.warnings, approvals.warnings)
+    queried_sources = sorted(set(publications.queried_sources + preprints.queried_sources + approvals.queried_sources))
+
+    safety_counter: Counter[str] = Counter()
+    examples: dict[str, list[str]] = defaultdict(list)
+    for publication in publications.items:
+        for signal in extract_safety_signals(publication.title, publication.abstract):
+            safety_counter[signal] += 1
+            if len(examples[signal]) < 2:
+                examples[signal].append(publication.title)
+    for publication in preprints.items:
+        for signal in extract_safety_signals(publication.title, publication.abstract):
+            safety_counter[signal] += 1
+            if len(examples[signal]) < 2:
+                examples[signal].append(publication.title)
+    for approval in approvals.items:
+        for signal in extract_safety_signals(
+            approval.warnings,
+            approval.adverse_reactions,
+            approval.contraindications,
+            approval.drug_interactions,
+        ):
+            safety_counter[signal] += 1
+            title = approval.brand_name or approval.generic_name or approval.approval_id
+            if title and len(examples[signal]) < 2:
+                examples[signal].append(title)
+
+    result = {
+        "indication": indication,
+        "mechanism_filter": mechanism,
+        "year_from": year_from,
+        "signals": [
+            {"signal": label, "count": count, "examples": examples.get(label, [])}
+            for label, count in safety_counter.most_common(10)
+        ],
+        "evidence_counts": {
+            "publications": len(publications.items),
+            "preprints": len(preprints.items),
+            "approved_drug_labels": len(approvals.items),
+        },
+    }
+
+    return detail_response(
+        tool_name="summarize_safety_signals",
+        data_type="safety_signal_summary",
+        item=result,
+        quality_note="Safety summary is an evidence-triage aid built from recurring terms in abstracts and approved-drug label sections.",
+        coverage="PubMed, medRxiv, and OpenFDA results for the requested indication and optional mechanism.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "mechanism": mechanism, "year_from": year_from},
+    )
+
+
+@mcp.tool()
+async def investigator_site_landscape(
+    indication: str,
+    phase: str | None = None,
+    sponsor: str | None = None,
+) -> dict[str, Any]:
+    """Summarize site geography and visible study officials for active trials."""
+    _, details, warnings, queried_sources = await _collect_trials_and_details(
+        indication=indication,
+        phase=phase,
+        sponsor=sponsor,
+        status="RECRUITING",
+    )
+
+    country_counter: Counter[str] = Counter()
+    facility_counter: Counter[str] = Counter()
+    official_counter: Counter[str] = Counter()
+    trial_counts_by_country: Counter[str] = Counter()
+
+    for detail in details:
+        for country in unique_nonempty(detail.location_countries):
+            country_counter[country] += detail.location_countries.count(country)
+            trial_counts_by_country[country] += 1
+        for facility in unique_nonempty(detail.facility_names):
+            facility_counter[facility] += detail.facility_names.count(facility)
+        for official in unique_nonempty(detail.overall_officials):
+            official_counter[official] += 1
+
+    result = {
+        "indication": indication,
+        "phase_filter": phase,
+        "sponsor_filter": sponsor,
+        "sample_size": len(details),
+        "countries": [
+            {
+                "country": country,
+                "site_mentions": site_mentions,
+                "trial_count": trial_counts_by_country.get(country, 0),
+            }
+            for country, site_mentions in country_counter.most_common(10)
+        ],
+        "facilities": [
+            {"facility": facility, "site_mentions": count}
+            for facility, count in facility_counter.most_common(10)
+        ],
+        "visible_study_officials": [
+            {"name": official, "trial_count": count}
+            for official, count in official_counter.most_common(10)
+        ],
+        "reference_trials": [detail.nct_id for detail in details[:8]],
+    }
+
+    return detail_response(
+        tool_name="investigator_site_landscape",
+        data_type="investigator_site_landscape",
+        item=result,
+        quality_note="Site landscape reflects published locations and study-official metadata visible in ClinicalTrials.gov, which may be incomplete for some studies.",
+        coverage="ClinicalTrials.gov detail records with location and official metadata.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor},
+    )
+
+
+@mcp.tool()
+async def watch_indication_signals(
+    indication: str,
+    mechanism: str | None = None,
+    sponsor: str | None = None,
+    recent_years: int = 2,
+    months_ahead: int = 18,
+) -> dict[str, Any]:
+    """Create a watchlist-style snapshot of emerging trials, readouts, and publications."""
+    year_from = max(2018, _intelligence_year_floor(recent_years))
+    trials_response = await registry.search_trials(
+        condition=indication,
+        sponsor=sponsor,
+        intervention=mechanism,
+        max_results=ANALYSIS_MAX_RESULTS,
+    )
+    publications = await registry.search_publications(
+        query=" ".join(part for part in [mechanism, indication] if part) or indication,
+        max_results=6,
+        year_from=year_from,
+    )
+    preprints = await registry.search_preprints(
+        query=" ".join(part for part in [mechanism, indication] if part) or indication,
+        max_results=6,
+        year_from=year_from,
+    )
+    approvals = await registry.search_approved_drugs(
+        indication=indication,
+        intervention=mechanism,
+        sponsor=sponsor,
+        max_results=6,
+    )
+    forecast_rows, benchmark_medians = _forecast_rows_from_trials(
+        trials_response.items,
+        months_ahead=months_ahead,
+    )
+
+    new_trial_rows = [
+        {
+            "nct_id": trial.nct_id,
+            "sponsor": trial.lead_sponsor,
+            "phase": phase_code(trial.phase),
+            "status": trial.overall_status,
+            "start_date": trial.start_date,
+        }
+        for trial in trials_response.items
+        if trial.start_date and trial.start_date[:4].isdigit() and int(trial.start_date[:4]) >= year_from
+    ]
+    new_trial_rows.sort(key=lambda item: (item["start_date"] or "", item["nct_id"]), reverse=True)
+
+    result = {
+        "indication": indication,
+        "mechanism_filter": mechanism,
+        "sponsor_filter": sponsor,
+        "watch_window_year_from": year_from,
+        "months_ahead": months_ahead,
+        "trial_activity": {
+            "active_trials": sum(1 for trial in trials_response.items if trial.overall_status in ACTIVE_STATUSES),
+            "recent_starts": new_trial_rows[:10],
+            "upcoming_readouts": forecast_rows[:10],
+            "phase_duration_benchmarks_months": benchmark_medians,
+        },
+        "publication_activity": [item.model_dump() for item in publications.items],
+        "preprint_activity": [item.model_dump() for item in preprints.items],
+        "approved_landscape": [item.model_dump() for item in approvals.items],
+    }
+
+    return detail_response(
+        tool_name="watch_indication_signals",
+        data_type="indication_watch_signals",
+        item=result,
+        quality_note="Watchlist snapshot surfaces fresh signals across trials, publications, preprints, and approved products for recurring monitoring workflows.",
+        coverage="ClinicalTrials.gov, PubMed, medRxiv, and OpenFDA results filtered to the requested indication and optional sponsor/mechanism.",
+        queried_sources=sorted(set(trials_response.queried_sources + publications.queried_sources + preprints.queried_sources + approvals.queried_sources)),
+        warnings=_warning_dicts(trials_response.warnings, publications.warnings, preprints.warnings, approvals.warnings),
+        requested_filters={
+            "indication": indication,
+            "mechanism": mechanism,
+            "sponsor": sponsor,
+            "recent_years": recent_years,
+            "months_ahead": months_ahead,
+        },
     )

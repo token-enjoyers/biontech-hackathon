@@ -168,6 +168,9 @@ class ClinicalTrialsSource(BaseSource):
         conditions_mod = proto.get("conditionsModule", {})
         arms_mod = proto.get("armsInterventionsModule", {})
         outcomes = proto.get("outcomesModule", {})
+        contacts_locations = proto.get("contactsLocationsModule", {})
+        locations = contacts_locations.get("locations", [])
+        overall_officials = contacts_locations.get("overallOfficials", [])
 
         data = self._normalize_summary(study)
         data.update({
@@ -180,6 +183,31 @@ class ClinicalTrialsSource(BaseSource):
             "study_type": design.get("studyType"),
             "conditions": conditions_mod.get("conditions", []),
             "why_stopped": proto.get("statusModule", {}).get("whyStopped"),
+            "facility_names": [
+                location.get("facility", "")
+                for location in locations
+                if isinstance(location, dict) and location.get("facility")
+            ],
+            "facility_cities": [
+                location.get("city", "")
+                for location in locations
+                if isinstance(location, dict) and location.get("city")
+            ],
+            "facility_states": [
+                location.get("state", "")
+                for location in locations
+                if isinstance(location, dict) and location.get("state")
+            ],
+            "location_countries": [
+                location.get("country", "")
+                for location in locations
+                if isinstance(location, dict) and location.get("country")
+            ],
+            "overall_officials": [
+                official.get("name", "")
+                for official in overall_officials
+                if isinstance(official, dict) and official.get("name")
+            ],
         })
         return data
 
