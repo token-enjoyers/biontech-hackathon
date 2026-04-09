@@ -1,9 +1,50 @@
 from __future__ import annotations
 
+import json
+import logging
+import time
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import Any
 
 from ._evidence_refs import document_refs_from_nested_data
 from ._tool_catalog import OUTPUT_KIND_NOTES, get_tool_metadata
+
+
+conversation_id_var: ContextVar[str | None] = ContextVar("conversation_id", default=None)
+request_start_var: ContextVar[float] = ContextVar("request_start", default=0.0)
+
+_audit_logger = logging.getLogger("gxp.audit")
+if not _audit_logger.handlers:
+    _handler = logging.FileHandler("audit.log", mode="a", encoding="utf-8")
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _audit_logger.addHandler(_handler)
+    _audit_logger.setLevel(logging.INFO)
+    _audit_logger.propagate = False
+
+
+def _write_audit_log(
+    *,
+    tool_name: str,
+    requested_filters: dict[str, Any] | None,
+    queried_sources: list[str] | None,
+    result_count: int,
+    warnings: list[dict[str, str]] | None,
+) -> None:
+    start = request_start_var.get()
+    duration_ms = int((time.perf_counter() - start) * 1000) if start else None
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "conversation_id": conversation_id_var.get(),
+        "tool": tool_name,
+        "inputs": {k: v for k, v in (requested_filters or {}).items() if v is not None},
+        "queried_sources": queried_sources or [],
+        "result_count": result_count,
+        "partial_failures": len(warnings or []),
+        "status": "partial" if warnings else "success",
+        "duration_ms": duration_ms,
+    }
+    _audit_logger.info(json.dumps(entry, ensure_ascii=False))
 
 
 def _unique_sources(items: list[dict[str, Any]]) -> list[str]:
@@ -199,6 +240,13 @@ def list_response(
     evidence_sources: list[str] | None = None,
     evidence_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    _write_audit_log(
+        tool_name=tool_name,
+        requested_filters=requested_filters,
+        queried_sources=queried_sources,
+        result_count=len(items),
+        warnings=warnings,
+    )
     return {
         "_meta": _list_meta(
             tool_name=tool_name,
@@ -231,6 +279,13 @@ def detail_response(
     evidence_sources: list[str] | None = None,
     evidence_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    _write_audit_log(
+        tool_name=tool_name,
+        requested_filters=requested_filters,
+        queried_sources=queried_sources,
+        result_count=1 if item is not None else 0,
+        warnings=warnings,
+    )
     items = [item] if item is not None else []
     payload: dict[str, Any] = {
         "_meta": _list_meta(

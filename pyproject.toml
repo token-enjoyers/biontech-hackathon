@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.0",
     "python-dotenv",
     "fastmcp>=3.2.2",
+    "starlette",
 ]
 
 [project.optional-dependencies]
