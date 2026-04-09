@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -8,6 +10,11 @@ from ..models import TrialDetail, TrialSummary, TrialTimeline
 from .base import BaseSource
 
 BASE_URL = "https://clinicaltrials.gov/api/v2"
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/123.0.0.0 Safari/537.36"
+)
 
 
 class ClinicalTrialsSource(BaseSource):
@@ -20,11 +27,73 @@ class ClinicalTrialsSource(BaseSource):
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
             timeout=30.0,
-            headers={"User-Agent": "medical-wizard-mcp/0.1.0"},
+            follow_redirects=True,
+            headers=self._base_headers(),
         )
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    def _base_headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": os.getenv("CLINICALTRIALS_USER_AGENT", "medical-wizard-mcp/0.1.0"),
+            "Accept": "application/json, text/plain, */*",
+        }
+
+    def _browser_headers(self, params: dict[str, Any]) -> dict[str, str]:
+        referer_query = {}
+        if params.get("query.cond"):
+            referer_query["cond"] = params["query.cond"]
+        if params.get("query.term"):
+            referer_query["term"] = params["query.term"]
+        referer = "https://clinicaltrials.gov/search"
+        if referer_query:
+            referer = f"{referer}?{urlencode(referer_query)}"
+
+        return {
+            "User-Agent": os.getenv("CLINICALTRIALS_BROWSER_USER_AGENT", BROWSER_USER_AGENT),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": referer,
+        }
+
+    async def _get_json(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any],
+        stage: str,
+    ) -> dict[str, Any]:
+        response = await self._client.get(path, params=params)
+        if response.status_code == 403:
+            response = await self._client.get(
+                path,
+                params=params,
+                headers=self._browser_headers(params),
+            )
+
+        if response.status_code == 403:
+            raise RuntimeError(
+                f"ClinicalTrials.gov blocked {stage} with status 403. "
+                "This usually indicates upstream bot protection or an egress IP restriction "
+                "for the current LibreChat/server environment."
+            )
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"ClinicalTrials.gov {stage} failed with status {exc.response.status_code}"
+            ) from exc
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"ClinicalTrials.gov {stage} returned invalid JSON") from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"ClinicalTrials.gov {stage} returned unexpected payload shape")
+        return payload
 
     # ------------------------------------------------------------------
     # Normalization helpers: map nested API v2 JSON → flat model dicts
@@ -46,9 +115,11 @@ class ClinicalTrialsSource(BaseSource):
             if page_token:
                 request_params["pageToken"] = page_token
 
-            response = await self._client.get("/studies", params=request_params)
-            response.raise_for_status()
-            data = response.json()
+            data = await self._get_json(
+                "/studies",
+                params=request_params,
+                stage="search_trials",
+            )
 
             batch = data.get("studies", [])
             if not batch:
@@ -165,13 +236,25 @@ class ClinicalTrialsSource(BaseSource):
         ]
 
     async def get_trial_details(self, nct_id: str) -> TrialDetail | None:
-        response = await self._client.get(f"/studies/{nct_id}")
-
+        response = await self._client.get(f"/studies/{nct_id}", headers=self._browser_headers({}))
         if response.status_code == 404:
             return None
-
-        response.raise_for_status()
-        study = response.json()
+        if response.status_code == 403:
+            raise RuntimeError(
+                "ClinicalTrials.gov blocked get_trial_details with status 403. "
+                "This usually indicates upstream bot protection or an egress IP restriction "
+                "for the current LibreChat/server environment."
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"ClinicalTrials.gov get_trial_details failed with status {exc.response.status_code}"
+            ) from exc
+        try:
+            study = response.json()
+        except ValueError as exc:
+            raise RuntimeError("ClinicalTrials.gov get_trial_details returned invalid JSON") from exc
 
         return TrialDetail(**self._normalize_detail(study))
 
