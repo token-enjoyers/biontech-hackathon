@@ -2,7 +2,7 @@ services:
   medical-wizard-mcp:
     build:
       context: ..
-      dockerfile: src/Medical_Wizard_MCP/Dockerfile
+      dockerfile: Dockerfile
     container_name: medical-wizard-mcp
     ports:
       - "8000:8000"
