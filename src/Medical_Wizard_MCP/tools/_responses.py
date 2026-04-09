@@ -13,15 +13,17 @@ from ._tool_catalog import OUTPUT_KIND_NOTES, get_tool_metadata
 try:
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     from opentelemetry._logs import set_logger_provider
     from opentelemetry.sdk.resources import Resource
 
-    _OTEL_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://34.51.251.60:4318")
+    _OTEL_GRPC_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "34.51.251.60:4317")
     _resource = Resource.create({"service.name": "medical-wizard-mcp"})
     _logger_provider = LoggerProvider(resource=_resource)
     _logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(OTLPLogExporter(endpoint=f"{_OTEL_ENDPOINT}/v1/logs"))
+        BatchLogRecordProcessor(
+            OTLPLogExporter(endpoint=_OTEL_GRPC_ENDPOINT, insecure=True)
+        )
     )
     set_logger_provider(_logger_provider)
     _otel_available = True
