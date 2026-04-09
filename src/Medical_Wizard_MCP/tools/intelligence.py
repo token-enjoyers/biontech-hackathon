@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..models import Publication, TrialDetail, TrialSummary
-from ..server import mcp
+from ..app import mcp
 from ..sources import registry
 from ._evidence_quality import annotate_evidence_quality, summarize_evidence_quality
 from ._inputs import build_trial_query_variants

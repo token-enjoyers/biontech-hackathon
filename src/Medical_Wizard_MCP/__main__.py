@@ -6,7 +6,7 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-from .server import mcp  # noqa: E402
+from .app import mcp  # noqa: E402
 from .sources.bigquery_oncology import BigQueryOncologySource  # noqa: E402
 from .sources.clinicaltrials import ClinicalTrialsSource  # noqa: E402
 from .sources.europepmc import EuropePMCConferenceSource  # noqa: E402

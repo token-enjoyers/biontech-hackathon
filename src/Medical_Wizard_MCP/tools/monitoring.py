@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from ..server import mcp
+from ..app import mcp
 from ..sources import registry
 from ._evidence_quality import annotate_evidence_quality, summarize_evidence_quality
 from ._responses import detail_response

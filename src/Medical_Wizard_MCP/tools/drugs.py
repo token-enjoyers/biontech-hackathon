@@ -1,6 +1,6 @@
 from typing import Any
 
-from ..server import mcp
+from ..app import mcp
 from ..sources import registry
 from ._evidence_quality import annotate_evidence_quality
 from ._responses import list_response
