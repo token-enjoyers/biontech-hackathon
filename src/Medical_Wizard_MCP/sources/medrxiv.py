@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from ..models import Publication
+from ._network import SourceTimeoutError, build_http_timeout
 from .base import BaseSource
 
 BASE_URL = "https://api.medrxiv.org"
@@ -29,7 +30,7 @@ class MedRxivSource(BaseSource):
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
-            timeout=30.0,
+            timeout=build_http_timeout(),
             headers={"User-Agent": "clinical-trials-mcp/0.1.0"},
         )
 
@@ -82,6 +83,8 @@ class MedRxivSource(BaseSource):
             response = await self._client.get(path)
             response.raise_for_status()
             payload = response.json()
+        except httpx.TimeoutException as exc:
+            raise SourceTimeoutError("medRxiv details timed out") from exc
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(
                 f"medRxiv details failed with status {exc.response.status_code}"

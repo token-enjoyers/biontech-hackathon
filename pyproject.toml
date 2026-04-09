@@ -9,6 +9,7 @@ dependencies = [
     "python-dotenv",
     "fastmcp>=3.2.2",
     "starlette",
+    "google-cloud-bigquery>=3.38.0",
 ]
 
 [project.optional-dependencies]

@@ -5,10 +5,11 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-from ..models import TrialDetail, TrialSummary
+from ..models import Publication, TrialDetail, TrialSummary
 from ..server import mcp
 from ..sources import registry
 from ._evidence_quality import annotate_evidence_quality, summarize_evidence_quality
+from ._inputs import build_trial_query_variants
 from ._intelligence import (
     ACTIVE_STATUSES,
     add_months_to_date,
@@ -86,6 +87,86 @@ def _model_payloads(items: list[Any]) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             payloads.append(payload)
     return payloads
+
+
+def _clean_query_text(value: str | None) -> str:
+    return " ".join(value.split()) if isinstance(value, str) and value.strip() else ""
+
+
+def _dedupe_publications(items: list[Publication]) -> list[Publication]:
+    deduped: dict[str, Publication] = {}
+    ordered_keys: list[str] = []
+
+    for item in items:
+        key = (
+            _clean_query_text(item.pmid)
+            or _clean_query_text(item.doi).lower()
+            or _clean_query_text(item.title).lower()
+        )
+        if not key:
+            continue
+        if key not in deduped:
+            ordered_keys.append(key)
+            deduped[key] = item
+
+    return [deduped[key] for key in ordered_keys]
+
+
+def _build_trial_evidence_queries(trial: TrialDetail) -> tuple[list[str], list[str]]:
+    title_queries = unique_nonempty(
+        [
+            variant
+            for title in [trial.brief_title, trial.official_title]
+            for variant in build_trial_query_variants(title)
+        ]
+    )
+    condition_hint = trial.conditions[0] if trial.conditions else ""
+    intervention_hint = trial.interventions[0] if trial.interventions else ""
+    title_and_id = f"{trial.nct_id} {trial.brief_title}".strip() if trial.brief_title else trial.nct_id
+    context_query = " ".join(part for part in [trial.nct_id, intervention_hint, condition_hint] if part)
+    lighter_context_query = " ".join(part for part in [intervention_hint, condition_hint] if part)
+
+    publication_queries = unique_nonempty(
+        [
+            *title_queries,
+            title_and_id,
+            context_query,
+            trial.nct_id,
+        ]
+    )[:4]
+    preprint_queries = unique_nonempty(
+        [
+            *title_queries,
+            title_and_id,
+            lighter_context_query,
+            trial.nct_id,
+        ]
+    )[:4]
+    return publication_queries, preprint_queries
+
+
+async def _collect_publication_matches(
+    queries: list[str],
+    *,
+    year_from: int,
+    max_results_per_query: int,
+    search_fn: Any,
+) -> tuple[list[Publication], list[str], list[dict[str, str]]]:
+    items: list[Publication] = []
+    queried_sources: list[str] = []
+    warnings: list[dict[str, str]] = []
+
+    for query in queries:
+        response = await search_fn(
+            query=query,
+            max_results=max_results_per_query,
+            year_from=year_from,
+        )
+        items.extend(response.items)
+        queried_sources.extend(response.queried_sources)
+        warnings.extend(_warning_dicts(response.warnings))
+
+    return _dedupe_publications(items), sorted(set(queried_sources)), warnings
 
 
 def _trial_mechanisms(trial: TrialSummary | TrialDetail | dict[str, Any]) -> list[str]:
@@ -1384,30 +1465,31 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
         )
 
     trial = detail.item
+    publication_queries, preprint_queries = _build_trial_evidence_queries(trial)
+
+    publication_items, publication_sources, publication_warnings = await _collect_publication_matches(
+        publication_queries,
+        year_from=2018,
+        max_results_per_query=4,
+        search_fn=registry.search_publications,
+    )
+    warnings = _warning_dicts(detail.warnings)
+    warnings.extend(publication_warnings)
+    queried_sources = sorted(set(detail.queried_sources + publication_sources))
+
+    preprint_items: list[Publication] = []
+    if include_preprints:
+        preprint_items, preprint_sources, preprint_warnings = await _collect_publication_matches(
+            preprint_queries,
+            year_from=2022,
+            max_results_per_query=3,
+            search_fn=registry.search_preprints,
+        )
+        warnings.extend(preprint_warnings)
+        queried_sources = sorted(set(queried_sources + preprint_sources))
+
     condition_hint = trial.conditions[0] if trial.conditions else ""
     intervention_hint = trial.interventions[0] if trial.interventions else ""
-    publication_query = " ".join(part for part in [nct_id, intervention_hint, condition_hint] if part)
-    preprint_query = " ".join(part for part in [intervention_hint, condition_hint] if part)
-
-    publication_response = await registry.search_publications(
-        query=publication_query or nct_id,
-        max_results=6,
-        year_from=2018,
-    )
-    warnings = _warning_dicts(detail.warnings, publication_response.warnings)
-    queried_sources = sorted(set(detail.queried_sources + publication_response.queried_sources))
-
-    preprint_items = []
-    if include_preprints:
-        preprint_response = await registry.search_preprints(
-            query=preprint_query or publication_query or nct_id,
-            max_results=4,
-            year_from=2022,
-        )
-        preprint_items = [item.model_dump() for item in preprint_response.items]
-        warnings.extend(_warning_dicts(preprint_response.warnings))
-        queried_sources = sorted(set(queried_sources + preprint_response.queried_sources))
-
     approval_items = []
     if include_approvals and condition_hint:
         approval_response = await registry.search_approved_drugs(
@@ -1419,8 +1501,8 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
         warnings.extend(_warning_dicts(approval_response.warnings))
         queried_sources = sorted(set(queried_sources + approval_response.queried_sources))
 
-    linked_publications = annotate_evidence_quality([item.model_dump() for item in publication_response.items])
-    linked_preprints = annotate_evidence_quality(preprint_items)
+    linked_publications = annotate_evidence_quality([item.model_dump() for item in publication_items[:8]])
+    linked_preprints = annotate_evidence_quality([item.model_dump() for item in preprint_items[:6]])
     related_approvals = annotate_evidence_quality(approval_items)
     evidence_documents = linked_publications + linked_preprints + related_approvals
 
@@ -1436,16 +1518,18 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
             "interventions": trial.interventions,
         },
         "queries_used": {
-            "publications": publication_query or nct_id,
-            "preprints": preprint_query or publication_query or nct_id,
+            "publications": publication_queries[0] if len(publication_queries) == 1 else publication_queries,
+            "publication_queries": publication_queries,
+            "preprints": preprint_queries[0] if len(preprint_queries) == 1 else preprint_queries,
+            "preprint_queries": preprint_queries,
             "approvals": {"indication": condition_hint, "intervention": intervention_hint or None},
         },
         "linked_publications": linked_publications,
         "linked_preprints": linked_preprints,
         "related_approvals": related_approvals,
         "evidence_summary": {
-            "publication_count": len(publication_response.items),
-            "preprint_count": len(preprint_items),
+            "publication_count": len(linked_publications),
+            "preprint_count": len(linked_preprints),
             "approval_count": len(approval_items),
         },
         "evidence_quality_summary": summarize_evidence_quality(evidence_documents),
@@ -1471,9 +1555,9 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
             ),
             _trace_step(
                 "search_publications",
-                sources=publication_response.queried_sources,
-                note="Queried peer-reviewed literature using trial-derived terms.",
-                filters={"query": publication_query or nct_id, "year_from": 2018, "max_results": 6},
+                sources=publication_sources,
+                note="Queried peer-reviewed literature using trial identifiers plus title-derived search terms.",
+                filters={"queries": publication_queries, "year_from": 2018, "max_results_per_query": 4},
                 output_kind="raw",
                 refs=linked_publications,
             ),
@@ -1481,9 +1565,9 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
                 [
                     _trace_step(
                         "search_preprints",
-                        sources=preprint_response.queried_sources,
-                        note="Queried preprints using trial-derived terms.",
-                        filters={"query": preprint_query or publication_query or nct_id, "year_from": 2022, "max_results": 4},
+                        sources=preprint_sources,
+                        note="Queried preprints using trial identifiers plus title-derived search terms.",
+                        filters={"queries": preprint_queries, "year_from": 2022, "max_results_per_query": 3},
                         output_kind="raw",
                         refs=linked_preprints,
                     )

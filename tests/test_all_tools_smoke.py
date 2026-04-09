@@ -4,6 +4,7 @@ import pytest
 
 from Medical_Wizard_MCP.models import (
     ApprovedDrug,
+    ConferenceAbstract,
     Publication,
     TrialDetail,
     TrialSummary,
@@ -11,6 +12,7 @@ from Medical_Wizard_MCP.models import (
 )
 from Medical_Wizard_MCP.sources import registry
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult
+from Medical_Wizard_MCP.tools.conferences import search_conference_abstracts
 from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
 from Medical_Wizard_MCP.tools.intelligence import (
     compare_trials,
@@ -178,6 +180,23 @@ APPROVED_DRUG = ApprovedDrug(
     mechanism_of_action="Blocks PD-1 signaling.",
 )
 
+CONFERENCE_ABSTRACT = ConferenceAbstract(
+    source="europe_pmc",
+    source_id="PPR1234",
+    title="ASCO abstract of personalized mRNA vaccine in NSCLC",
+    authors=["Alice Smith"],
+    conference_name="ASCO Annual Meeting",
+    conference_series="ASCO",
+    presentation_type="abstract",
+    abstract_number="TPS9101",
+    publication_year=2024,
+    publication_date="2024-06-01",
+    abstract="Encouraging early translational signal in TMB-high NSCLC.",
+    doi="10.1200/JCO.2024.TPS9101",
+    url="https://europepmc.org/article/MED/40000001",
+    journal="Journal of Clinical Oncology",
+)
+
 
 def _normalize_phase(value: str | None) -> str | None:
     if value is None:
@@ -275,6 +294,9 @@ def _patch_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_search_preprints(**_: object) -> ListQueryResult[Publication]:
         return ListQueryResult(items=[PREPRINT], queried_sources=["medrxiv"], warnings=[])
 
+    async def fake_search_conference_abstracts(**_: object) -> ListQueryResult[ConferenceAbstract]:
+        return ListQueryResult(items=[CONFERENCE_ABSTRACT], queried_sources=["europe_pmc"], warnings=[])
+
     async def fake_search_approved_drugs(**kwargs: object) -> ListQueryResult[ApprovedDrug]:
         items = [APPROVED_DRUG]
         sponsor = kwargs.get("sponsor")
@@ -297,6 +319,7 @@ def _patch_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(registry, "get_trial_timelines", fake_get_trial_timelines)
     monkeypatch.setattr(registry, "search_publications", fake_search_publications)
     monkeypatch.setattr(registry, "search_preprints", fake_search_preprints)
+    monkeypatch.setattr(registry, "search_conference_abstracts", fake_search_conference_abstracts)
     monkeypatch.setattr(registry, "search_approved_drugs", fake_search_approved_drugs)
 
 
@@ -316,6 +339,11 @@ TOOL_CASES = [
     (
         "search_preprints",
         lambda: search_preprints(term="mRNA vaccine", indication="GBM"),
+        "results",
+    ),
+    (
+        "search_conference_abstracts",
+        lambda: search_conference_abstracts(term="mRNA vaccine", indication="NSCLC"),
         "results",
     ),
     (

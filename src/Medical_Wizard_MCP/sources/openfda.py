@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import math
 
 import httpx
 
 from Medical_Wizard_MCP.models import ApprovedDrug
+from Medical_Wizard_MCP.sources._network import SourceTimeoutError, build_http_timeout
 from Medical_Wizard_MCP.sources.base import BaseSource
 
 logger = logging.getLogger(__name__)
@@ -103,8 +105,23 @@ class OpenFDASource(BaseSource):
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
 
+    def call_timeout_seconds(
+        self,
+        *,
+        stage: str,
+        requested_max_results: int | None = None,
+    ) -> float:
+        timeout = super().call_timeout_seconds(
+            stage=stage,
+            requested_max_results=requested_max_results,
+        )
+        if stage != "search_approved_drugs":
+            return timeout
+        requested = min(max(requested_max_results or 1, 1), 40)
+        return round(max(timeout, 14.0 + requested * 0.35), 1)
+
     async def initialize(self) -> None:
-        self._client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
+        self._client = httpx.AsyncClient(base_url=BASE_URL, timeout=build_http_timeout())
 
     async def close(self) -> None:
         if self._client is not None:
@@ -132,8 +149,21 @@ class OpenFDASource(BaseSource):
         }
 
         try:
-            response = await self._client.get("/drug/label.json", params=params)
+            request_timeout = self.call_timeout_seconds(
+                stage="search_approved_drugs",
+                requested_max_results=max_results,
+            )
+            response = await self._client.get(
+                "/drug/label.json",
+                params=params,
+                timeout=build_http_timeout(
+                    read_seconds=request_timeout,
+                    write_seconds=max(8.0, math.ceil(request_timeout / 2)),
+                ),
+            )
             response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise SourceTimeoutError("OpenFDA search_approved_drugs timed out") from exc
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return []

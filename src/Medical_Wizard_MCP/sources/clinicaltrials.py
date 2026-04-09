@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import shutil
+from contextlib import suppress
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 
 from ..models import TrialDetail, TrialSummary, TrialTimeline
+from ._network import (
+    CURL_MAX_TIME_SECONDS,
+    CURL_PROCESS_TIMEOUT_SECONDS,
+    SourceTimeoutError,
+    build_http_timeout,
+)
 from .base import BaseSource
 
 BASE_URL = "https://clinicaltrials.gov/api/v2"
@@ -30,10 +38,27 @@ class ClinicalTrialsSource(BaseSource):
         self._client: httpx.AsyncClient | None = None
         self._prefer_curl = self._env_prefers_curl()
 
+    def call_timeout_seconds(
+        self,
+        *,
+        stage: str,
+        requested_max_results: int | None = None,
+    ) -> float:
+        timeout = super().call_timeout_seconds(
+            stage=stage,
+            requested_max_results=requested_max_results,
+        )
+        if stage in {"search_trials", "get_trial_timelines"}:
+            requested = min(max(requested_max_results or 1, 1), 60)
+            return round(max(timeout, 16.0 + requested * 0.30), 1)
+        if stage == "get_trial_details":
+            return max(timeout, 16.0)
+        return timeout
+
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
-            timeout=30.0,
+            timeout=build_http_timeout(),
             follow_redirects=True,
             headers=self._base_headers(),
         )
@@ -88,6 +113,7 @@ class ClinicalTrialsSource(BaseSource):
         *,
         params: dict[str, Any],
         stage: str,
+        requested_max_results: int | None = None,
         allow_not_found: bool = False,
     ) -> dict[str, Any] | None:
         curl_path = shutil.which("curl")
@@ -102,11 +128,17 @@ class ClinicalTrialsSource(BaseSource):
             url = f"{url}?{urlencode(params)}"
 
         headers = self._browser_headers(params)
+        timeout_seconds = self.call_timeout_seconds(
+            stage=stage,
+            requested_max_results=requested_max_results,
+        )
         process = await asyncio.create_subprocess_exec(
             curl_path,
             "-sS",
             "-L",
             "--compressed",
+            "--max-time",
+            str(max(int(math.ceil(timeout_seconds)), int(CURL_MAX_TIME_SECONDS))),
             "-H",
             f"User-Agent: {headers['User-Agent']}",
             "-H",
@@ -121,7 +153,23 @@ class ClinicalTrialsSource(BaseSource):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=35)
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=max(timeout_seconds + 3.0, CURL_PROCESS_TIMEOUT_SECONDS),
+            )
+        except asyncio.TimeoutError as exc:
+            with suppress(ProcessLookupError):
+                process.kill()
+            await process.communicate()
+            raise SourceTimeoutError(
+                f"ClinicalTrials.gov {stage} curl fallback timed out after {max(timeout_seconds + 3.0, CURL_PROCESS_TIMEOUT_SECONDS):.1f}s"
+            ) from exc
+        except asyncio.CancelledError:
+            with suppress(ProcessLookupError):
+                process.kill()
+            await process.communicate()
+            raise
 
         if process.returncode != 0:
             error = stderr.decode().strip() or f"curl exited with status {process.returncode}"
@@ -167,6 +215,7 @@ class ClinicalTrialsSource(BaseSource):
         *,
         params: dict[str, Any],
         stage: str,
+        requested_max_results: int | None = None,
         allow_not_found: bool = False,
     ) -> dict[str, Any] | None:
         if self._prefer_curl:
@@ -174,13 +223,29 @@ class ClinicalTrialsSource(BaseSource):
                 path,
                 params=params,
                 stage=stage,
+                requested_max_results=requested_max_results,
                 allow_not_found=allow_not_found,
             )
 
         if self._client is None:
             raise RuntimeError("ClinicalTrials.gov client is not initialized")
 
-        response = await self._client.get(path, params=params)
+        try:
+            timeout_seconds = self.call_timeout_seconds(
+                stage=stage,
+                requested_max_results=requested_max_results,
+            )
+            response = await self._client.get(
+                path,
+                params=params,
+                timeout=build_http_timeout(
+                    read_seconds=timeout_seconds,
+                    write_seconds=max(8.0, math.ceil(timeout_seconds / 2)),
+                ),
+            )
+        except httpx.TimeoutException as exc:
+            raise SourceTimeoutError(f"ClinicalTrials.gov {stage} timed out") from exc
+
         if response.status_code == 403:
             # ClinicalTrials.gov blocks httpx in some environments even with browser headers.
             # Once we observe that, switch the process to curl to avoid repeated 403s and log spam.
@@ -189,6 +254,7 @@ class ClinicalTrialsSource(BaseSource):
                 path,
                 params=params,
                 stage=stage,
+                requested_max_results=requested_max_results,
                 allow_not_found=allow_not_found,
             )
 
@@ -220,7 +286,7 @@ class ClinicalTrialsSource(BaseSource):
             return None
         return "/".join(p.replace("PHASE", "Phase ") for p in phases)
 
-    async def _fetch_studies(self, params: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    async def _fetch_studies(self, params: dict[str, Any], limit: int, *, stage: str) -> list[dict[str, Any]]:
         studies: list[dict[str, Any]] = []
         page_token: str | None = None
 
@@ -233,7 +299,8 @@ class ClinicalTrialsSource(BaseSource):
             data = await self._get_json(
                 "/studies",
                 params=request_params,
-                stage="search_trials",
+                stage=stage,
+                requested_max_results=limit,
             )
 
             batch = data.get("studies", [])
@@ -353,29 +420,31 @@ class ClinicalTrialsSource(BaseSource):
     async def search_trials(
         self,
         condition: str,
+        query: str | None = None,
         phase: str | None = None,
         status: str | None = None,
         sponsor: str | None = None,
         intervention: str | None = None,
         max_results: int = 10,
     ) -> list[TrialSummary]:
-        params: dict[str, Any] = {
-            "query.cond": condition,
-            "format": "json",
-        }
+        params: dict[str, Any] = {"format": "json"}
+
+        if condition:
+            params["query.cond"] = condition
 
         if phase:
             self._apply_phase_filter(params, phase)
         if status:
             params["filter.overallStatus"] = status.upper()
-        if sponsor:
-            params["query.term"] = sponsor
+        query_terms = " ".join(part for part in [query, sponsor] if part)
+        if query_terms:
+            params["query.term"] = query_terms
         if intervention:
             params["query.intr"] = intervention
 
         return [
             TrialSummary(**self._normalize_summary(study))
-            for study in await self._fetch_studies(params, max_results)
+            for study in await self._fetch_studies(params, max_results, stage="search_trials")
         ]
 
     async def get_trial_details(self, nct_id: str) -> TrialDetail | None:
@@ -383,6 +452,7 @@ class ClinicalTrialsSource(BaseSource):
             f"/studies/{nct_id}",
             params={"format": "json"},
             stage="get_trial_details",
+            requested_max_results=None,
             allow_not_found=True,
         )
         if study is None:
@@ -411,5 +481,5 @@ class ClinicalTrialsSource(BaseSource):
 
         return [
             TrialTimeline(**self._normalize_timeline(study))
-            for study in await self._fetch_studies(params, max_results)
+            for study in await self._fetch_studies(params, max_results, stage="get_trial_timelines")
         ]

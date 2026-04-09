@@ -1,6 +1,7 @@
-import os
 import asyncio
 import time
+import os
+
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -16,7 +17,7 @@ auth = JWTVerifier(
 mcp = FastMCP(
     name="Medical Wizard MCP",
     version=os.getenv("MCP_VERSION", "local"),
-    auth=auth,
+ #   auth=auth,
 )
 
 

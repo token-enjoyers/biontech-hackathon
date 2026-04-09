@@ -99,6 +99,21 @@ def _normalize_evidence_trace(
 
         raw_refs = item.get("refs")
         refs = document_refs_from_nested_data(raw_refs)
+        if not refs and isinstance(item.get("evidence_refs"), list):
+            normalized_refs = []
+            for ref in item["evidence_refs"]:
+                if not isinstance(ref, dict):
+                    continue
+                if all(isinstance(ref.get(key), str) and ref[key] for key in ("source", "id", "label", "url")):
+                    normalized_refs.append(
+                        {
+                            "source": ref["source"],
+                            "id": ref["id"],
+                            "label": ref["label"],
+                            "url": ref["url"],
+                        }
+                    )
+            refs = sorted(normalized_refs, key=lambda ref: (ref["source"], ref["id"]))
         if not refs and isinstance(raw_refs, list):
             normalized_refs = []
             for ref in raw_refs:
@@ -119,6 +134,31 @@ def _normalize_evidence_trace(
 
         normalized.append(entry)
     return normalized
+
+
+def _item_with_source_refs(
+    item: dict[str, Any],
+    *,
+    fallback_refs: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    refs = document_refs_from_nested_data(item)
+    if not refs:
+        refs = fallback_refs or []
+    return {
+        **item,
+        "source_refs": refs,
+    }
+
+
+def _list_items_with_source_refs(
+    items: list[dict[str, Any]],
+    *,
+    fallback_refs: list[dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _item_with_source_refs(item, fallback_refs=fallback_refs)
+        for item in items
+    ]
 
 
 def _list_meta(
@@ -202,6 +242,13 @@ def _list_meta(
         "coverage": coverage,
         "requested_filters": _compact_filters(requested_filters),
         "partial_failures": warnings or [],
+        "attribution_guidance": {
+            "should_cite_sources": True,
+            "preferred_rendering": "Append `Quellen:` with the relevant `source_refs` for each output section, bullet, or result item whenever you summarize this tool output.",
+            "result_ref_field": "source_refs",
+            "fallback_ref_field": "_meta.evidence_refs",
+            "minimum_expectation": "Every user-facing summary should include the concrete source documents that support it.",
+        },
     }
     if tool_metadata:
         output_kind = tool_metadata.get("output_kind")
@@ -247,21 +294,29 @@ def list_response(
         result_count=len(items),
         warnings=warnings,
     )
+    normalized_trace = _normalize_evidence_trace(evidence_trace)
+    trace_refs = [
+        ref
+        for step in normalized_trace
+        for ref in step.get("evidence_refs", [])
+        if isinstance(ref, dict)
+    ]
+    prepared_items = _list_items_with_source_refs(items, fallback_refs=trace_refs)
     return {
         "_meta": _list_meta(
             tool_name=tool_name,
             data_type=data_type,
-            items=items,
+            items=prepared_items,
             quality_note=quality_note,
             coverage=coverage,
             queried_sources=queried_sources,
             warnings=warnings,
             requested_filters=requested_filters,
             evidence_sources=evidence_sources,
-            evidence_trace=evidence_trace,
+            evidence_trace=normalized_trace,
         ),
-        "count": len(items),
-        "results": items,
+        "count": len(prepared_items),
+        "results": prepared_items,
     }
 
 
@@ -287,6 +342,15 @@ def detail_response(
         warnings=warnings,
     )
     items = [item] if item is not None else []
+    normalized_trace = _normalize_evidence_trace(evidence_trace)
+    trace_refs = [
+        ref
+        for step in normalized_trace
+        for ref in step.get("evidence_refs", [])
+        if isinstance(ref, dict)
+    ]
+    prepared_item = _item_with_source_refs(item, fallback_refs=trace_refs) if item is not None else None
+    items = [prepared_item] if prepared_item is not None else []
     payload: dict[str, Any] = {
         "_meta": _list_meta(
             tool_name=tool_name,
@@ -298,9 +362,9 @@ def detail_response(
             warnings=warnings,
             requested_filters=requested_filters,
             evidence_sources=evidence_sources,
-            evidence_trace=evidence_trace,
+            evidence_trace=normalized_trace,
         ),
-        "result": item,
+        "result": prepared_item,
     }
 
     if item is None and missing_message is not None:

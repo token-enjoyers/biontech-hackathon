@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from ..models import Publication
+from ._network import SourceTimeoutError, build_http_timeout
 from .base import BaseSource
 
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -40,7 +41,7 @@ class PubMedSource(BaseSource):
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
-            timeout=30.0,
+            timeout=build_http_timeout(),
             headers={"User-Agent": "medical-wizard-mcp/0.1.0"},
         )
         self._api_key = os.getenv("PUBMED_API_KEY")
@@ -69,6 +70,8 @@ class PubMedSource(BaseSource):
             response = await self._client.get("/esearch.fcgi", params=params)
             response.raise_for_status()
             payload = response.json()
+        except httpx.TimeoutException as exc:
+            raise SourceTimeoutError("PubMed esearch timed out") from exc
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(
                 f"PubMed esearch failed with status {exc.response.status_code}"
@@ -112,6 +115,8 @@ class PubMedSource(BaseSource):
         try:
             response = await self._client.get("/efetch.fcgi", params=params)
             response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise SourceTimeoutError("PubMed efetch timed out") from exc
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(
                 f"PubMed efetch failed with status {exc.response.status_code}"

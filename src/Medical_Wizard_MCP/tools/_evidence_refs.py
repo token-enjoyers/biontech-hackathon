@@ -96,6 +96,31 @@ def _openfda_ref(payload: dict[str, Any]) -> dict[str, str] | None:
     )
 
 
+def _generic_source_ref(payload: dict[str, Any]) -> dict[str, str] | None:
+    source = _clean_string(payload.get("source"))
+    source_id = _clean_string(payload.get("source_id")) or _clean_string(payload.get("doi"))
+    label = _clean_string(payload.get("title")) or _clean_string(payload.get("conference_name")) or source_id
+    doi = _clean_string(payload.get("doi"))
+    url = (
+        _clean_string(payload.get("url"))
+        or (
+            doi
+            if doi and doi.startswith(("https://doi.org/", "http://doi.org/"))
+            else f"https://doi.org/{quote(doi, safe='/')}"
+            if doi
+            else None
+        )
+    )
+    if not source or not source_id or not label or not url:
+        return None
+    return make_document_ref(
+        source=source,
+        doc_id=source_id,
+        label=label,
+        url=url,
+    )
+
+
 def document_ref_from_payload(payload: dict[str, Any]) -> dict[str, str] | None:
     source = _clean_string(payload.get("source"))
     if source == "clinicaltrials_gov":
@@ -115,7 +140,7 @@ def document_ref_from_payload(payload: dict[str, Any]) -> dict[str, str] | None:
         return _medrxiv_ref(payload)
     if payload.get("approval_id"):
         return _openfda_ref(payload)
-    return None
+    return _generic_source_ref(payload)
 
 
 def _walk_for_document_refs(value: Any, refs: dict[tuple[str, str], dict[str, str]]) -> None:

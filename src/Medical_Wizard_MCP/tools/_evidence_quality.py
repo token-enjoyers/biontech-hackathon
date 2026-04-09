@@ -17,6 +17,8 @@ def _combined_text(payload: dict[str, Any]) -> str:
         "brief_title",
         "official_title",
         "abstract",
+        "conference_name",
+        "conference_series",
         "indication",
         "mechanism_of_action",
         "clinical_studies_summary",
@@ -94,6 +96,27 @@ def _score_clinicaltrials(payload: dict[str, Any]) -> tuple[float, list[str]]:
     return _clamp_score(score), reasons
 
 
+def _score_conference_abstract(payload: dict[str, Any]) -> tuple[float, list[str]]:
+    score = 0.58
+    reasons = ["Conference abstract or proceedings evidence from a scholarly index."]
+    if payload.get("conference_series"):
+        score += 0.04
+        reasons.append("A target conference series was identified explicitly.")
+    if payload.get("abstract"):
+        score += 0.05
+        reasons.append("Abstract text is available for direct inspection.")
+    if payload.get("doi"):
+        score += 0.03
+        reasons.append("A DOI is available for citation or follow-up.")
+    if payload.get("presentation_type"):
+        score += 0.02
+        reasons.append("Presentation format metadata is available.")
+    if str(payload.get("source") or "").lower() == "europe_pmc":
+        score += 0.02
+        reasons.append("The record is available through a biomedical literature index.")
+    return _clamp_score(score), reasons
+
+
 def evidence_quality_fields(payload: dict[str, Any]) -> dict[str, Any]:
     source = str(payload.get("source") or "").lower()
     if source == "pubmed":
@@ -104,6 +127,8 @@ def evidence_quality_fields(payload: dict[str, Any]) -> dict[str, Any]:
         score, reasons = _score_openfda(payload)
     elif source == "clinicaltrials_gov":
         score, reasons = _score_clinicaltrials(payload)
+    elif source == "europe_pmc":
+        score, reasons = _score_conference_abstract(payload)
     else:
         score, reasons = 0.5, ["Evidence source type is not explicitly ranked, so a neutral baseline was used."]
 

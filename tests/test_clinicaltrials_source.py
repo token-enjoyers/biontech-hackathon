@@ -32,10 +32,12 @@ async def test_search_trials_defaults_to_curl() -> None:
         *,
         params: dict[str, str],
         stage: str,
+        requested_max_results: int | None = None,
         allow_not_found: bool = False,
     ) -> dict[str, object]:
         assert path == "/studies"
         assert stage == "search_trials"
+        assert requested_max_results == 1
         assert allow_not_found is False
         assert params["query.cond"] == "lung cancer"
         return LIST_RESPONSE
@@ -74,9 +76,11 @@ async def test_search_trials_switches_to_curl_after_first_403_when_opted_into_ht
         *,
         params: dict[str, str],
         stage: str,
+        requested_max_results: int | None = None,
         allow_not_found: bool = False,
     ) -> dict[str, object]:
         curl_calls.append((path, stage))
+        assert requested_max_results == 1
         assert allow_not_found is False
         assert params["query.cond"] == "lung cancer"
         return LIST_RESPONSE
@@ -114,11 +118,13 @@ async def test_search_trials_falls_back_to_curl_on_persistent_403() -> None:
         *,
         params: dict[str, str],
         stage: str,
+        requested_max_results: int | None = None,
         allow_not_found: bool = False,
     ) -> dict[str, object]:
         assert path == "/studies"
         assert params["query.cond"] == "lung cancer"
         assert stage == "search_trials"
+        assert requested_max_results == 1
         assert allow_not_found is False
         return LIST_RESPONSE
 
@@ -196,10 +202,12 @@ async def test_get_trial_details_uses_shared_curl_transport_after_403(
         *,
         params: dict[str, str],
         stage: str,
+        requested_max_results: int | None = None,
         allow_not_found: bool = False,
     ) -> dict[str, object] | None:
         assert path == "/studies/NCT12345678"
         assert stage == "get_trial_details"
+        assert requested_max_results is None
         assert allow_not_found is True
         return detail_response
 
