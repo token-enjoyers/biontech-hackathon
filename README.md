@@ -92,13 +92,10 @@ src/Medical_Wizard_MCP/
 │   ├── base.py
 │   ├── registry.py
 │   ├── clinicaltrials.py
-│   ├── crossref.py
 │   ├── europepmc.py
 │   ├── medrxiv.py
-│   ├── openalex.py
 │   ├── openfda.py
-│   ├── pubmed.py
-│   └── semanticscholar.py
+│   └── pubmed.py
 └── tools/
     ├── __init__.py
     ├── _evidence_extraction.py
@@ -329,7 +326,7 @@ This makes the server easier for attached LLMs to route, cite, and audit.
 | `get_trial_details` | `raw` | one detailed trial record by `nct_id` |
 | `search_publications` | `raw` | PubMed literature retrieval |
 | `search_preprints` | `raw` | medRxiv preprint retrieval |
-| `search_conference_abstracts` | `raw` | conference-style evidence retrieval via OpenAlex, Crossref, and Europe PMC |
+| `search_conference_abstracts` | `raw` | conference-style evidence retrieval via Europe PMC |
 | `search_approved_drugs` | `raw` | approved-drug / label context from OpenFDA |
 
 #### Analysis and benchmarking
@@ -405,7 +402,7 @@ This materially improves recall for named studies whose latest evidence is index
 #### `search_conference_abstracts`
 
 Conference retrieval currently:
-- uses `OpenAlex`, `Crossref`, and `Europe PMC`
+- uses `Europe PMC`
 - normalizes conference series for `ASCO`, `AACR`, `ESMO`, and `SITC`
 - ranks results with transparent `conference_result_score`
 - filters out weak records below `minimum_conference_result_score`
@@ -428,8 +425,6 @@ Currently registered sources in [src/Medical_Wizard_MCP/__main__.py](/Users/jann
 | `PubMed` | peer-reviewed literature | `publication_search` |
 | `medRxiv` | preprints | `preprint_search` |
 | `OpenFDA` | approved-drug / label context | `approved_drugs` |
-| `OpenAlex` | conference-oriented scholarly retrieval | `conference_search` |
-| `Crossref` | conference-oriented scholarly retrieval | `conference_search` |
 | `Europe PMC` | conference-oriented scholarly retrieval | `conference_search` |
 
 ### SourceRegistry behavior
@@ -444,10 +439,6 @@ Current dedupe behavior is identifier-based where possible:
 - trials: `nct_id`
 - publications: `pmid`, then `doi`, then `title`
 - preprints: `doi`, then `title`
-
-### Conference source note
-
-`src/Medical_Wizard_MCP/sources/semanticscholar.py` exists in the repository, but it is not currently registered in `__main__.py` and is not part of the active conference retrieval path.
 
 ---
 

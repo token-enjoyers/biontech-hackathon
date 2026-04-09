@@ -127,7 +127,7 @@ def evidence_quality_fields(payload: dict[str, Any]) -> dict[str, Any]:
         score, reasons = _score_openfda(payload)
     elif source == "clinicaltrials_gov":
         score, reasons = _score_clinicaltrials(payload)
-    elif source in {"openalex", "crossref", "europe_pmc", "semantic_scholar"}:
+    elif source == "europe_pmc":
         score, reasons = _score_conference_abstract(payload)
     else:
         score, reasons = 0.5, ["Evidence source type is not explicitly ranked, so a neutral baseline was used."]

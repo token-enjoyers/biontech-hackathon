@@ -8,11 +8,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 
 from .server import mcp  # noqa: E402
 from .sources.clinicaltrials import ClinicalTrialsSource  # noqa: E402
-from .sources.crossref import CrossrefConferenceSource  # noqa: E402
 from .sources.europepmc import EuropePMCConferenceSource  # noqa: E402
 from .sources.medrxiv import MedRxivSource  # noqa: E402
 from .sources.openfda import OpenFDASource  # noqa: E402
-from .sources.openalex import OpenAlexConferenceSource  # noqa: E402
 from .sources.pubmed import PubMedSource  # noqa: E402
 from .sources.registry import registry  # noqa: E402
 
@@ -23,8 +21,6 @@ registry.register(ClinicalTrialsSource())
 registry.register(OpenFDASource())
 registry.register(PubMedSource())
 registry.register(MedRxivSource())
-registry.register(OpenAlexConferenceSource())
-registry.register(CrossrefConferenceSource())
 registry.register(EuropePMCConferenceSource())
 
 if __name__ == "__main__":

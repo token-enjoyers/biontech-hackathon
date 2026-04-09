@@ -4,9 +4,7 @@ import os
 
 import pytest
 
-from Medical_Wizard_MCP.sources.crossref import CrossrefConferenceSource
 from Medical_Wizard_MCP.sources.europepmc import EuropePMCConferenceSource
-from Medical_Wizard_MCP.sources.openalex import OpenAlexConferenceSource
 
 
 @pytest.mark.asyncio
@@ -23,11 +21,7 @@ async def test_conference_sources_live_smoke() -> None:
         if item.strip()
     ]
 
-    specs = [
-        ("openalex", OpenAlexConferenceSource()),
-        ("crossref", CrossrefConferenceSource()),
-        ("europe_pmc", EuropePMCConferenceSource()),
-    ]
+    specs = [("europe_pmc", EuropePMCConferenceSource())]
 
     results_by_source: dict[str, list[str]] = {}
     total_hits = 0
@@ -49,5 +43,5 @@ async def test_conference_sources_live_smoke() -> None:
 
     print(results_by_source)
 
-    assert results_by_source["openalex"], "OpenAlex live conference search returned no results."
+    assert results_by_source["europe_pmc"], "Europe PMC live conference search returned no results."
     assert total_hits >= 1, "Live conference search returned no hits across the enabled sources."

@@ -30,12 +30,12 @@ def coalesce_query(
     return None
 
 
-_TRIAL_QUERY_STOPWORDS = {
+_TRIAL_QUERY_STOPWORDS = (
     "clinical trial",
     "clinical study",
     "study",
     "trial",
-}
+)
 
 
 def build_trial_query_variants(query: str | None) -> list[str]:
@@ -50,6 +50,8 @@ def build_trial_query_variants(query: str | None) -> list[str]:
     lowered = original.lower()
 
     cleaned = lowered
+    # Remove longer phrases before shorter suffixes like "trial" so
+    # inputs such as "ROSETTA Lung clinical trial" normalize cleanly.
     for stopword in _TRIAL_QUERY_STOPWORDS:
         cleaned = re.sub(rf"\b{re.escape(stopword)}\b", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()

@@ -181,8 +181,8 @@ APPROVED_DRUG = ApprovedDrug(
 )
 
 CONFERENCE_ABSTRACT = ConferenceAbstract(
-    source="openalex",
-    source_id="https://openalex.org/W123",
+    source="europe_pmc",
+    source_id="PPR1234",
     title="ASCO abstract of personalized mRNA vaccine in NSCLC",
     authors=["Alice Smith"],
     conference_name="ASCO Annual Meeting",
@@ -193,7 +193,7 @@ CONFERENCE_ABSTRACT = ConferenceAbstract(
     publication_date="2024-06-01",
     abstract="Encouraging early translational signal in TMB-high NSCLC.",
     doi="10.1200/JCO.2024.TPS9101",
-    url="https://doi.org/10.1200/JCO.2024.TPS9101",
+    url="https://europepmc.org/article/MED/40000001",
     journal="Journal of Clinical Oncology",
 )
 
@@ -295,7 +295,7 @@ def _patch_registry(monkeypatch: pytest.MonkeyPatch) -> None:
         return ListQueryResult(items=[PREPRINT], queried_sources=["medrxiv"], warnings=[])
 
     async def fake_search_conference_abstracts(**_: object) -> ListQueryResult[ConferenceAbstract]:
-        return ListQueryResult(items=[CONFERENCE_ABSTRACT], queried_sources=["openalex", "crossref"], warnings=[])
+        return ListQueryResult(items=[CONFERENCE_ABSTRACT], queried_sources=["europe_pmc"], warnings=[])
 
     async def fake_search_approved_drugs(**kwargs: object) -> ListQueryResult[ApprovedDrug]:
         items = [APPROVED_DRUG]

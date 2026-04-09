@@ -91,14 +91,9 @@ def _conference_result_fields(
     if item.get("doi"):
         score += 0.04
         reasons.append("DOI is available for follow-up.")
-    if source == "openalex":
-        score += 0.07
-        reasons.append("OpenAlex tends to surface stronger conference-style records here.")
-    elif source == "europe_pmc":
+    if source == "europe_pmc":
         score += 0.05
         reasons.append("Europe PMC record comes from a biomedical index.")
-    elif source == "crossref":
-        score += 0.01
     score += overlap_ratio * 0.22
     if overlap_ratio > 0:
         reasons.append(f"Query overlap is {overlap_ratio:.0%}.")
@@ -147,7 +142,7 @@ Avoid this when the user explicitly needs peer-reviewed journal literature first
             data_type="conference_abstract_search_results",
             items=[],
             quality_note="Conference abstract search requires a query term, intervention, indication, or NCT ID.",
-            coverage="Major oncology and immuno-oncology conference signals from conference-aware scholarly APIs.",
+            coverage="Major oncology and immuno-oncology conference signals from Europe PMC.",
             warnings=[
                 {
                     "source": "tool_validation",
@@ -210,8 +205,8 @@ Avoid this when the user explicitly needs peer-reviewed journal literature first
         tool_name="search_conference_abstracts",
         data_type="conference_abstract_search_results",
         items=payload,
-        quality_note="Conference abstracts are early-signal evidence gathered from conference-aware scholarly APIs and ranked with transparent evidence-quality heuristics. They are useful for competitive and translational scouting but should not be treated as equivalent to full peer-reviewed publications.",
-        coverage="ASCO, AACR, ESMO, and SITC-oriented conference records retrievable through OpenAlex, Crossref, and Europe PMC.",
+        quality_note="Conference abstracts are early-signal evidence gathered from Europe PMC and ranked with transparent evidence-quality heuristics. They are useful for competitive and translational scouting but should not be treated as equivalent to full peer-reviewed publications.",
+        coverage="ASCO, AACR, ESMO, and SITC-oriented conference records retrievable through Europe PMC.",
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
         evidence_sources=response.queried_sources,
@@ -219,7 +214,7 @@ Avoid this when the user explicitly needs peer-reviewed journal literature first
             {
                 "step": "search_conference_sources",
                 "sources": response.queried_sources,
-                "note": "Queried conference-aware scholarly APIs for oncology and immuno-oncology congress records matching the effective search string and requested conference scope.",
+                "note": "Queried Europe PMC for oncology and immuno-oncology congress records matching the effective search string and requested conference scope.",
                 "filters": {
                     **requested_filters,
                     "conference_series": resolved_series,

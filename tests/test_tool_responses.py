@@ -355,28 +355,12 @@ async def test_search_conference_abstracts_returns_standard_envelope(
 ) -> None:
     async def fake_search_conference_abstracts(**_: object) -> ListQueryResult[ConferenceAbstract]:
         return ListQueryResult(
-            queried_sources=["openalex", "crossref"],
+            queried_sources=["europe_pmc"],
             warnings=[],
             items=[
                 ConferenceAbstract(
-                    source="crossref",
-                    source_id="10.0000/meeting-tips",
-                    title="ASCO Annual Meeting Tips",
-                    authors=["Editorial Team"],
-                    conference_name="ASCO Annual Meeting",
-                    conference_series="ASCO",
-                    presentation_type=None,
-                    abstract_number=None,
-                    publication_year=2025,
-                    publication_date="2025-06-01",
-                    abstract="",
-                    doi="10.0000/meeting-tips",
-                    url="https://doi.org/10.0000/meeting-tips",
-                    journal="Oncology News",
-                ),
-                ConferenceAbstract(
-                    source="openalex",
-                    source_id="https://openalex.org/W123",
+                    source="europe_pmc",
+                    source_id="PPR1234",
                     title="Late-breaking ASCO abstract for individualized neoantigen therapy in melanoma",
                     authors=["Alice Smith", "Bob Jones"],
                     conference_name="ASCO Annual Meeting",
@@ -408,7 +392,7 @@ async def test_search_conference_abstracts_returns_standard_envelope(
     assert response["_meta"]["tool"] == "search_conference_abstracts"
     assert response["_meta"]["tool_family"] == "conferences"
     assert response["_meta"]["output_kind"] == "raw"
-    assert response["_meta"]["queried_sources"] == ["crossref", "openalex"]
+    assert response["_meta"]["queried_sources"] == ["europe_pmc"]
     assert response["_meta"]["requested_filters"]["effective_query"] == "neoantigen therapy melanoma"
     assert response["_meta"]["requested_filters"]["conference_series"] == ["ASCO", "AACR"]
     assert response["_meta"]["requested_filters"]["minimum_conference_result_score"] == 0.55
@@ -421,7 +405,7 @@ async def test_search_conference_abstracts_returns_standard_envelope(
     assert response["results"][0]["title"].startswith("Late-breaking ASCO abstract")
     assert response["results"][0]["conference_series"] == "ASCO"
     assert response["results"][0]["conference_result_score"] >= 0.55
-    assert response["results"][0]["source_refs"][0]["id"] == "https://openalex.org/W123"
+    assert response["results"][0]["source_refs"][0]["id"] == "PPR1234"
 
 
 @pytest.mark.asyncio
