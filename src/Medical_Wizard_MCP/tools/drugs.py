@@ -44,6 +44,21 @@ Args:
         coverage="Approved products represented in OpenFDA drug labels for the requested indication and optional filters.",
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            {
+                "step": "search_openfda_labels",
+                "sources": response.queried_sources,
+                "note": "Retrieved approved-drug label records matching the requested indication and optional sponsor/intervention filters.",
+                "filters": {
+                    "indication": indication,
+                    "sponsor": sponsor,
+                    "intervention": intervention,
+                    "max_results": max_results,
+                },
+                "output_kind": "raw",
+            }
+        ],
         requested_filters={
             "indication": indication,
             "sponsor": sponsor,

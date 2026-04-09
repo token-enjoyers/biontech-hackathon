@@ -31,6 +31,20 @@ Avoid calling this when you already know the exact tool you need.
         quality_note="The catalog is generated from server-maintained metadata and is intended to help attached LLMs choose tools more reliably.",
         coverage="All MCP tools currently registered by this server.",
         queried_sources=["server_catalog"],
+        evidence_sources=["server_catalog"],
+        evidence_trace=[
+            {
+                "step": "load_server_tool_catalog",
+                "sources": ["server_catalog"],
+                "note": "Returns server-maintained metadata about available tools and routing hints.",
+                "filters": {
+                    "tool_names": tool_names or [],
+                    "category": category,
+                    "output_kind": output_kind,
+                },
+                "output_kind": "raw",
+            }
+        ],
         requested_filters={
             "tool_names": tool_names or [],
             "category": category,

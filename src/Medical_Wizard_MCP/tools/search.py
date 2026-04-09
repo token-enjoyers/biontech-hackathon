@@ -61,6 +61,19 @@ Args:
                 "intervention": intervention,
                 "max_results": max_results,
             },
+            evidence_sources=["tool_validation"],
+            evidence_trace=[
+                {
+                    "step": "validate_indication",
+                    "sources": ["tool_validation"],
+                    "note": "Rejected the request because no indication or condition filter was provided.",
+                    "filters": {
+                        "indication": indication,
+                        "condition": condition,
+                    },
+                    "output_kind": "raw",
+                }
+            ],
         )
 
     max_results = min(max_results, 20)
@@ -81,6 +94,23 @@ Args:
         coverage="Clinical trial registry sources configured for this server.",
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            {
+                "step": "search_trial_registry",
+                "sources": response.queried_sources,
+                "note": "Fetched candidate trials matching the requested filters from registered trial sources.",
+                "filters": {
+                    "indication": resolved_indication,
+                    "phase": phase,
+                    "status": status,
+                    "sponsor": sponsor,
+                    "intervention": intervention,
+                    "max_results": max_results,
+                },
+                "output_kind": "raw",
+            }
+        ],
         requested_filters={
             "indication": resolved_indication,
             "condition": condition,
@@ -123,6 +153,16 @@ The trial detail includes: nct_id, brief_title, official_title, phase, overall_s
                 }
             ],
             requested_filters={"nct_id": nct_id},
+            evidence_sources=["tool_validation"],
+            evidence_trace=[
+                {
+                    "step": "validate_nct_id",
+                    "sources": ["tool_validation"],
+                    "note": "Rejected the request because the identifier did not match the NCT######## format.",
+                    "filters": {"nct_id": nct_id},
+                    "output_kind": "raw",
+                }
+            ],
         )
 
     detail = await registry.get_trial_details(nct_id)
@@ -135,5 +175,15 @@ The trial detail includes: nct_id, brief_title, official_title, phase, overall_s
         missing_message=f"No trial found with ID {nct_id}",
         queried_sources=detail.queried_sources,
         warnings=[warning.as_dict() for warning in detail.warnings],
+        evidence_sources=detail.queried_sources,
+        evidence_trace=[
+            {
+                "step": "fetch_trial_detail",
+                "sources": detail.queried_sources,
+                "note": "Resolved the requested trial identifier against registered detail-capable sources.",
+                "filters": {"nct_id": nct_id},
+                "output_kind": "raw",
+            }
+        ],
         requested_filters={"nct_id": nct_id},
     )

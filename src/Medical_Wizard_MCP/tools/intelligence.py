@@ -48,6 +48,27 @@ def _warning_dicts(*warning_lists: list[Any]) -> list[dict[str, str]]:
     return warnings
 
 
+def _trace_step(
+    step: str,
+    *,
+    sources: list[str] | None,
+    note: str,
+    filters: dict[str, Any] | None = None,
+    output_kind: str,
+) -> dict[str, Any]:
+    return {
+        "step": step,
+        "sources": sorted(set(sources or [])),
+        "note": note,
+        "filters": {
+            key: value
+            for key, value in (filters or {}).items()
+            if value is not None and value != "" and value != []
+        },
+        "output_kind": output_kind,
+    }
+
+
 def _trial_mechanisms(trial: TrialSummary | TrialDetail | dict[str, Any]) -> list[str]:
     if isinstance(trial, dict):
         brief_title = trial.get("brief_title")
@@ -113,10 +134,12 @@ def _velocity_row(trial: dict[str, Any], indication_avg: float | None) -> dict[s
     }
 
 
-async def _fetch_details(nct_ids: list[str]) -> tuple[list[TrialDetail], list[dict[str, str]], list[str]]:
+async def _fetch_details(
+    nct_ids: list[str],
+) -> tuple[list[TrialDetail], list[dict[str, str]], list[str], list[dict[str, Any]]]:
     unique_ids = list(dict.fromkeys(nct_id for nct_id in nct_ids if nct_id))
     if not unique_ids:
-        return [], [], []
+        return [], [], [], []
 
     responses = await asyncio.gather(*(registry.get_trial_details(nct_id) for nct_id in unique_ids))
 
@@ -136,7 +159,17 @@ async def _fetch_details(nct_ids: list[str]) -> tuple[list[TrialDetail], list[di
                     "error": f"No trial details found for {nct_id}",
                 }
             )
-    return details, warnings, sorted(set(queried_sources))
+    unique_sources = sorted(set(queried_sources))
+    trace = [
+        _trace_step(
+            "fetch_trial_details",
+            sources=unique_sources,
+            note="Loaded trial detail records for the selected NCT identifiers.",
+            filters={"nct_ids": unique_ids},
+            output_kind="raw",
+        )
+    ]
+    return details, warnings, unique_sources, trace
 
 
 async def _collect_trials_and_details(
@@ -148,7 +181,7 @@ async def _collect_trials_and_details(
     mechanism: str | None = None,
     max_results: int = ANALYSIS_MAX_RESULTS,
     detail_limit: int = DETAIL_SAMPLE_SIZE * 2,
-) -> tuple[list[TrialSummary], list[TrialDetail], list[dict[str, str]], list[str]]:
+) -> tuple[list[TrialSummary], list[TrialDetail], list[dict[str, str]], list[str], list[dict[str, Any]]]:
     response = await registry.search_trials(
         condition=indication,
         phase=phase,
@@ -157,12 +190,29 @@ async def _collect_trials_and_details(
         intervention=mechanism,
         max_results=max_results,
     )
-    details, detail_warnings, detail_sources = await _fetch_details(
+    details, detail_warnings, detail_sources, detail_trace = await _fetch_details(
         [trial.nct_id for trial in response.items[:detail_limit]]
     )
     warnings = _warning_dicts(response.warnings, detail_warnings)
     queried_sources = sorted(set(response.queried_sources + detail_sources))
-    return response.items, details, warnings, queried_sources
+    trace = [
+        _trace_step(
+            "search_trial_registry",
+            sources=response.queried_sources,
+            note="Collected comparable trial rows as the starting evidence set.",
+            filters={
+                "indication": indication,
+                "phase": phase,
+                "status": status,
+                "sponsor": sponsor,
+                "mechanism": mechanism,
+                "max_results": max_results,
+            },
+            output_kind="raw",
+        ),
+        *detail_trace,
+    ]
+    return response.items, details, warnings, queried_sources, trace
 
 
 def _merged_trial_text(trial: TrialSummary | TrialDetail) -> str:
@@ -319,7 +369,7 @@ async def _analyze_competition_gaps_impl(
         )
         warnings.extend(_warning_dicts(terminated_response.warnings))
         queried_sources = sorted(set(queried_sources + terminated_response.queried_sources))
-        terminated_details, detail_warnings, detail_sources = await _fetch_details(
+        terminated_details, detail_warnings, detail_sources, detail_trace = await _fetch_details(
             [trial.nct_id for trial in terminated_response.items[:DETAIL_SAMPLE_SIZE]]
         )
         warnings.extend(detail_warnings)
@@ -387,6 +437,37 @@ async def _analyze_competition_gaps_impl(
         coverage="Clinical trial registry search results for the requested indication.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_active_trials",
+                sources=active_response.queried_sources,
+                note="Collected active or non-completed trials for mechanism-density analysis.",
+                filters={"indication": indication, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            *(
+                [
+                    _trace_step(
+                        "search_terminated_trials",
+                        sources=terminated_response.queried_sources,
+                        note="Collected terminated trials to add stop-signal context.",
+                        filters={"indication": indication, "status": "TERMINATED"},
+                        output_kind="raw",
+                    ),
+                    *detail_trace,
+                ]
+                if include_terminated
+                else []
+            ),
+            _trace_step(
+                "score_competition_gaps",
+                sources=queried_sources,
+                note="Classified mechanisms and scored low-density spaces using simple rule-based thresholds.",
+                filters={"indication": indication, "include_terminated": include_terminated},
+                output_kind="heuristic",
+            ),
+        ],
         requested_filters={"indication": indication, "include_terminated": include_terminated},
     )
 
@@ -412,7 +493,7 @@ async def compare_trials(nct_ids: list[str]) -> dict[str, Any]:
             requested_filters={"nct_ids": requested_ids},
         )
 
-    details, warnings, queried_sources = await _fetch_details(requested_ids)
+    details, warnings, queried_sources, detail_trace = await _fetch_details(requested_ids)
 
     comparison_rows = []
     for detail in details:
@@ -440,6 +521,17 @@ async def compare_trials(nct_ids: list[str]) -> dict[str, Any]:
         coverage="ClinicalTrials.gov detail data for the requested studies.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            *detail_trace,
+            _trace_step(
+                "compare_trial_fields",
+                sources=queried_sources,
+                note="Aligned comparable trial fields and extracted biomarker hints from normalized detail text.",
+                filters={"nct_ids": requested_ids},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"nct_ids": requested_ids},
     )
 
@@ -507,6 +599,23 @@ Use this when you need counts by phase, intervention type, or sponsor rather tha
         coverage="Clinical trial registry search results for the requested indication and optional status filter.",
         queried_sources=response.queried_sources,
         warnings=_warning_dicts(response.warnings),
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_trial_registry",
+                sources=response.queried_sources,
+                note="Fetched comparable trials for the requested indication and optional status filter.",
+                filters={"indication": indication, "status": status, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "aggregate_trial_density",
+                sources=response.queried_sources,
+                note="Grouped the retrieved trial rows by phase, sponsor, or heuristic intervention type.",
+                filters={"indication": indication, "group_by": group_by, "status": status},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "group_by": group_by, "status": status},
     )
 
@@ -616,6 +725,23 @@ Use this when you want sponsor and mechanism concentration rather than raw trial
         coverage="Clinical trial registry search results for the requested indication, phase, and status filters.",
         queried_sources=response.queried_sources,
         warnings=_warning_dicts(response.warnings),
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_trial_registry",
+                sources=response.queried_sources,
+                note="Fetched trial rows for the requested competitive slice.",
+                filters={"indication": indication, "phase": phase, "status": status, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "aggregate_competitive_landscape",
+                sources=response.queried_sources,
+                note="Grouped trials by sponsor and heuristic mechanism labels, then computed a simple saturation score.",
+                filters={"indication": indication, "phase": phase, "status": status},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "status": status},
     )
 
@@ -664,6 +790,23 @@ async def get_recruitment_velocity(
         coverage="Clinical trial timeline data for the requested indication and optional phase/sponsor filters.",
         queried_sources=response.queried_sources,
         warnings=_warning_dicts(response.warnings),
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "fetch_trial_timelines",
+                sources=response.queried_sources,
+                note="Retrieved normalized timeline rows for the requested indication.",
+                filters={"indication": indication, "phase": phase, "sponsor": sponsor, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "estimate_recruitment_velocity",
+                sources=response.queried_sources,
+                note="Estimated enrollment-per-month from enrollment targets and observed or elapsed durations.",
+                filters={"indication": indication, "phase": phase, "sponsor": sponsor},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor},
     )
 
@@ -688,7 +831,7 @@ Use this only when the user explicitly wants a server-generated recommendation. 
         max_results=8,
         year_from=2018,
     )
-    details, detail_warnings, detail_sources = await _fetch_details(
+    details, detail_warnings, detail_sources, detail_trace = await _fetch_details(
         [trial.nct_id for trial in candidate_trials.items[:DETAIL_SAMPLE_SIZE]]
     )
 
@@ -787,6 +930,38 @@ Use this only when the user explicitly wants a server-generated recommendation. 
         coverage="ClinicalTrials.gov and PubMed data available through the currently configured sources.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "analyze_competition_gaps",
+                sources=((whitespace.get("_meta") or {}).get("evidence_sources", [])),
+                note="Loaded a heuristic gap scan to identify sparse or failure-prone mechanism spaces.",
+                filters={"indication": indication, "include_terminated": True},
+                output_kind="heuristic",
+            ),
+            _trace_step(
+                "search_candidate_trials",
+                sources=candidate_trials.queried_sources,
+                note="Fetched trials matching the requested indication and mechanism.",
+                filters={"indication": indication, "mechanism": mechanism, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_supporting_publications",
+                sources=publication_response.queried_sources,
+                note="Fetched peer-reviewed evidence relevant to the mechanism and indication.",
+                filters={"query": f"{mechanism} {indication}", "year_from": 2018, "max_results": 8},
+                output_kind="raw",
+            ),
+            *detail_trace,
+            _trace_step(
+                "generate_design_recommendation",
+                sources=queried_sources,
+                note="Combined trial patterns, publication hints, and gap heuristics into a draft recommendation.",
+                filters={"indication": indication, "mechanism": mechanism},
+                output_kind="heuristic",
+            ),
+        ],
         requested_filters={"indication": indication, "mechanism": mechanism},
     )
 
@@ -812,7 +987,7 @@ Use this only when the user explicitly wants a server-generated profile draft ra
         max_results=8,
         year_from=2018,
     )
-    details, detail_warnings, detail_sources = await _fetch_details(
+    details, detail_warnings, detail_sources, detail_trace = await _fetch_details(
         [trial.nct_id for trial in completed_trials.items[:DETAIL_SAMPLE_SIZE]]
     )
 
@@ -875,6 +1050,35 @@ Use this only when the user explicitly wants a server-generated profile draft ra
         coverage="Completed-trial detail records and PubMed evidence available through the currently configured sources.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_completed_trials",
+                sources=completed_trials.queried_sources,
+                note="Fetched completed trials for the requested indication and mechanism.",
+                filters={"indication": indication, "mechanism": mechanism, "status": "COMPLETED"},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_supporting_publications",
+                sources=publications.queried_sources,
+                note="Fetched publications used to derive biomarker and profile hints.",
+                filters={
+                    "query": " ".join(part for part in [mechanism, indication, biomarker] if part),
+                    "year_from": 2018,
+                    "max_results": 8,
+                },
+                output_kind="raw",
+            ),
+            *detail_trace,
+            _trace_step(
+                "generate_patient_profile",
+                sources=queried_sources,
+                note="Applied heuristic inclusion, exclusion, and biomarker rules to produce a draft patient profile.",
+                filters={"indication": indication, "mechanism": mechanism, "biomarker": biomarker},
+                output_kind="heuristic",
+            ),
+        ],
         requested_filters={"indication": indication, "mechanism": mechanism, "biomarker": biomarker},
     )
 
@@ -887,7 +1091,7 @@ async def benchmark_trial_design(
     sponsor: str | None = None,
 ) -> dict[str, Any]:
     """Derived benchmark of common design patterns across similar trials."""
-    _, details, warnings, queried_sources = await _collect_trials_and_details(
+    _, details, warnings, queried_sources, evidence_trace = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
         sponsor=sponsor,
@@ -960,6 +1164,17 @@ async def benchmark_trial_design(
         coverage="ClinicalTrials.gov detail records for the requested indication and optional filters.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            *evidence_trace,
+            _trace_step(
+                "benchmark_design_patterns",
+                sources=queried_sources,
+                note="Aggregated study types, archetypes, enrollment, endpoints, biomarkers, and comparator signals across the detail sample.",
+                filters={"indication": indication, "phase": phase, "mechanism": mechanism, "sponsor": sponsor},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism, "sponsor": sponsor},
     )
 
@@ -971,7 +1186,7 @@ async def benchmark_eligibility_criteria(
     mechanism: str | None = None,
 ) -> dict[str, Any]:
     """Derived benchmark of recurring eligibility and biomarker criteria."""
-    _, details, warnings, queried_sources = await _collect_trials_and_details(
+    _, details, warnings, queried_sources, evidence_trace = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
         mechanism=mechanism,
@@ -1019,6 +1234,17 @@ async def benchmark_eligibility_criteria(
         coverage="ClinicalTrials.gov trial detail records with published eligibility text.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            *evidence_trace,
+            _trace_step(
+                "extract_eligibility_patterns",
+                sources=queried_sources,
+                note="Applied rule-based extraction to eligibility text to summarize common inclusion, exclusion, and CNS handling patterns.",
+                filters={"indication": indication, "phase": phase, "mechanism": mechanism},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
     )
 
@@ -1030,7 +1256,7 @@ async def benchmark_endpoints(
     mechanism: str | None = None,
 ) -> dict[str, Any]:
     """Derived benchmark of endpoint categories across similar trials."""
-    _, details, warnings, queried_sources = await _collect_trials_and_details(
+    _, details, warnings, queried_sources, evidence_trace = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
         mechanism=mechanism,
@@ -1077,6 +1303,17 @@ async def benchmark_endpoints(
         coverage="ClinicalTrials.gov trial detail records with published primary and secondary outcomes.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            *evidence_trace,
+            _trace_step(
+                "classify_endpoint_patterns",
+                sources=queried_sources,
+                note="Grouped endpoint text into high-level categories using deterministic endpoint rules.",
+                filters={"indication": indication, "phase": phase, "mechanism": mechanism},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
     )
 
@@ -1175,6 +1412,56 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
         coverage="ClinicalTrials.gov detail data plus PubMed, medRxiv, and OpenFDA queries derived from the trial context.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "fetch_trial_detail",
+                sources=detail.queried_sources,
+                note="Loaded the trial context used to generate evidence queries.",
+                filters={"nct_id": nct_id},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_publications",
+                sources=publication_response.queried_sources,
+                note="Queried peer-reviewed literature using trial-derived terms.",
+                filters={"query": publication_query or nct_id, "year_from": 2018, "max_results": 6},
+                output_kind="raw",
+            ),
+            *(
+                [
+                    _trace_step(
+                        "search_preprints",
+                        sources=preprint_response.queried_sources,
+                        note="Queried preprints using trial-derived terms.",
+                        filters={"query": preprint_query or publication_query or nct_id, "year_from": 2022, "max_results": 4},
+                        output_kind="raw",
+                    )
+                ]
+                if include_preprints
+                else []
+            ),
+            *(
+                [
+                    _trace_step(
+                        "search_approved_drugs",
+                        sources=approval_response.queried_sources,
+                        note="Queried approved-drug labels for trial-related indication and intervention context.",
+                        filters={"indication": condition_hint, "intervention": intervention_hint or None, "max_results": 5},
+                        output_kind="raw",
+                    )
+                ]
+                if include_approvals and condition_hint
+                else []
+            ),
+            _trace_step(
+                "assemble_evidence_links",
+                sources=queried_sources,
+                note="Packaged the query-based evidence associations into a single cross-source bundle.",
+                filters={"nct_id": nct_id, "include_preprints": include_preprints, "include_approvals": include_approvals},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"nct_id": nct_id, "include_preprints": include_preprints, "include_approvals": include_approvals},
     )
 
@@ -1186,7 +1473,7 @@ async def analyze_patient_segments(
     mechanism: str | None = None,
 ) -> dict[str, Any]:
     """Derived segment summary for biomarkers, disease stage, and line of therapy."""
-    _, details, warnings, queried_sources = await _collect_trials_and_details(
+    _, details, warnings, queried_sources, evidence_trace = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
         mechanism=mechanism,
@@ -1243,6 +1530,17 @@ async def analyze_patient_segments(
         coverage="ClinicalTrials.gov detail records for the requested indication and optional filters.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            *evidence_trace,
+            _trace_step(
+                "extract_patient_segments",
+                sources=queried_sources,
+                note="Applied rule-based segment extraction across merged title, condition, outcome, and eligibility text.",
+                filters={"indication": indication, "phase": phase, "mechanism": mechanism},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
     )
 
@@ -1287,6 +1585,23 @@ Use this only when estimated future dates are acceptable. Prefer timeline tools 
         coverage="ClinicalTrials.gov timeline fields available through normalized trial-search results.",
         queried_sources=response.queried_sources,
         warnings=_warning_dicts(response.warnings),
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_trial_registry",
+                sources=response.queried_sources,
+                note="Fetched trial rows with available timing fields for the requested indication.",
+                filters={"indication": indication, "phase": phase, "sponsor": sponsor, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "forecast_readout_dates",
+                sources=response.queried_sources,
+                note="Used known completion dates when available and otherwise estimated dates from phase-duration benchmarks.",
+                filters={"indication": indication, "phase": phase, "sponsor": sponsor, "months_ahead": months_ahead},
+                output_kind="heuristic",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor, "months_ahead": months_ahead},
     )
 
@@ -1368,6 +1683,23 @@ async def track_competitor_assets(
         coverage="ClinicalTrials.gov trial-search records for the requested indication.",
         queried_sources=response.queried_sources,
         warnings=_warning_dicts(response.warnings),
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_trial_registry",
+                sources=response.queried_sources,
+                note="Fetched trial rows used to group sponsor assets.",
+                filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "group_competitor_assets",
+                sources=response.queried_sources,
+                note="Grouped interventions under sponsors and attached heuristic mechanism labels.",
+                filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism},
     )
 
@@ -1446,6 +1778,37 @@ async def summarize_safety_signals(
         coverage="PubMed, medRxiv, and OpenFDA results for the requested indication and optional mechanism.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            _trace_step(
+                "search_publications",
+                sources=publications.queried_sources,
+                note="Fetched peer-reviewed safety-related literature.",
+                filters={"query": query, "year_from": year_from, "max_results": 8},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_preprints",
+                sources=preprints.queried_sources,
+                note="Fetched preprints for additional early safety signals.",
+                filters={"query": query, "year_from": year_from, "max_results": 5},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_approved_drug_labels",
+                sources=approvals.queried_sources,
+                note="Fetched approved-drug labels for marketed safety context.",
+                filters={"indication": indication, "mechanism": mechanism, "max_results": 6},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "extract_safety_signal_patterns",
+                sources=queried_sources,
+                note="Applied deterministic safety-term extraction across abstracts and label sections.",
+                filters={"indication": indication, "mechanism": mechanism, "year_from": year_from},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "mechanism": mechanism, "year_from": year_from},
     )
 
@@ -1457,7 +1820,7 @@ async def investigator_site_landscape(
     sponsor: str | None = None,
 ) -> dict[str, Any]:
     """Derived site and investigator landscape for active trials."""
-    _, details, warnings, queried_sources = await _collect_trials_and_details(
+    _, details, warnings, queried_sources, evidence_trace = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
         sponsor=sponsor,
@@ -1510,6 +1873,17 @@ async def investigator_site_landscape(
         coverage="ClinicalTrials.gov detail records with location and official metadata.",
         queried_sources=queried_sources,
         warnings=warnings,
+        evidence_sources=queried_sources,
+        evidence_trace=[
+            *evidence_trace,
+            _trace_step(
+                "aggregate_site_landscape",
+                sources=queried_sources,
+                note="Aggregated countries, facilities, and visible study officials from recruiting-trial detail records.",
+                filters={"indication": indication, "phase": phase, "sponsor": sponsor, "status": "RECRUITING"},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor},
     )
 
@@ -1589,6 +1963,51 @@ async def watch_indication_signals(
         coverage="ClinicalTrials.gov, PubMed, medRxiv, and OpenFDA results filtered to the requested indication and optional sponsor/mechanism.",
         queried_sources=sorted(set(trials_response.queried_sources + publications.queried_sources + preprints.queried_sources + approvals.queried_sources)),
         warnings=_warning_dicts(trials_response.warnings, publications.warnings, preprints.warnings, approvals.warnings),
+        evidence_sources=sorted(set(trials_response.queried_sources + publications.queried_sources + preprints.queried_sources + approvals.queried_sources)),
+        evidence_trace=[
+            _trace_step(
+                "search_trial_registry",
+                sources=trials_response.queried_sources,
+                note="Fetched trial rows to summarize active programs and recent starts.",
+                filters={"indication": indication, "mechanism": mechanism, "sponsor": sponsor, "max_results": ANALYSIS_MAX_RESULTS},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_publications",
+                sources=publications.queried_sources,
+                note="Fetched recent peer-reviewed literature for the watch window.",
+                filters={"query": " ".join(part for part in [mechanism, indication] if part) or indication, "year_from": year_from, "max_results": 6},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_preprints",
+                sources=preprints.queried_sources,
+                note="Fetched recent preprints for the watch window.",
+                filters={"query": " ".join(part for part in [mechanism, indication] if part) or indication, "year_from": year_from, "max_results": 6},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "search_approved_drug_labels",
+                sources=approvals.queried_sources,
+                note="Fetched approved-product context for the same indication slice.",
+                filters={"indication": indication, "mechanism": mechanism, "sponsor": sponsor, "max_results": 6},
+                output_kind="raw",
+            ),
+            _trace_step(
+                "forecast_readouts",
+                sources=trials_response.queried_sources,
+                note="Estimated upcoming readouts from known or phase-benchmark timing signals.",
+                filters={"indication": indication, "months_ahead": months_ahead},
+                output_kind="heuristic",
+            ),
+            _trace_step(
+                "assemble_watch_snapshot",
+                sources=sorted(set(trials_response.queried_sources + publications.queried_sources + preprints.queried_sources + approvals.queried_sources)),
+                note="Packaged the trial, publication, preprint, approval, and forecast signals into one watchlist snapshot.",
+                filters={"indication": indication, "mechanism": mechanism, "sponsor": sponsor, "recent_years": recent_years, "months_ahead": months_ahead},
+                output_kind="derived",
+            ),
+        ],
         requested_filters={
             "indication": indication,
             "mechanism": mechanism,
