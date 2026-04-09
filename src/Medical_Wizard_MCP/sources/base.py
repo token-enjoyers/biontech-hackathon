@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
+from ..models import ApprovedDrug, ConferenceAbstract, Publication, TrialDetail, TrialSummary, TrialTimeline
 
 
 class BaseSource(ABC):
@@ -31,6 +31,7 @@ class BaseSource(ABC):
     async def search_trials(
         self,
         condition: str,
+        query: str | None = None,
         phase: str | None = None,
         status: str | None = None,
         sponsor: str | None = None,
@@ -75,4 +76,13 @@ class BaseSource(ABC):
         intervention: str | None = None,
         max_results: int = 10,
     ) -> list[ApprovedDrug]:
+        return []
+
+    async def search_conference_abstracts(
+        self,
+        query: str,
+        conference_series: list[str] | None = None,
+        max_results: int = 10,
+        year_from: int | None = None,
+    ) -> list[ConferenceAbstract]:
         return []

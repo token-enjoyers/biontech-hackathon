@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from Medical_Wizard_MCP.models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
+from Medical_Wizard_MCP.models import ApprovedDrug, ConferenceAbstract, Publication, TrialDetail, TrialSummary, TrialTimeline
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult, SourceWarning
 from Medical_Wizard_MCP.tools.catalog import describe_tools
+from Medical_Wizard_MCP.tools.conferences import search_conference_abstracts
 from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
 from Medical_Wizard_MCP.tools.publications import search_preprints, search_publications
 from Medical_Wizard_MCP.tools.search import get_trial_details, search_trials
@@ -50,8 +51,54 @@ async def test_search_trials_returns_list_envelope(monkeypatch: pytest.MonkeyPat
     assert response["_meta"]["evidence_trace"][0]["step"] == "search_trial_registry"
     assert response["_meta"]["evidence_trace"][0]["evidence_refs"][0]["url"].endswith("/NCT123")
     assert response["_meta"]["evidence_refs"][0]["id"] == "NCT123"
+    assert response["_meta"]["attribution_guidance"]["result_ref_field"] == "source_refs"
+    assert response["results"][0]["source_refs"][0]["id"] == "NCT123"
     assert response["_meta"]["requested_filters"]["indication"] == "lung cancer"
     assert response["results"][0]["nct_id"] == "NCT123"
+
+
+@pytest.mark.asyncio
+async def test_search_trials_accepts_named_trial_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_calls: list[dict[str, object]] = []
+
+    async def fake_search_trials(**kwargs: object) -> ListQueryResult[TrialSummary]:
+        captured_calls.append(dict(kwargs))
+        query = str(kwargs.get("query"))
+        items = []
+        if query.lower() in {"rosetta-lung", "rosetta lung", "rosettalung"}:
+            items = [
+                TrialSummary(
+                    source="clinicaltrials_gov",
+                    nct_id="NCT99999999",
+                    brief_title="ROSETTA-Lung",
+                    phase="Phase 3",
+                    overall_status="COMPLETED",
+                    lead_sponsor="BioNTech",
+                    interventions=["Investigational arm"],
+                    primary_outcomes=["OS"],
+                    enrollment_count=300,
+                )
+            ]
+        return ListQueryResult(
+            queried_sources=["clinicaltrials_gov"],
+            warnings=[],
+            items=items,
+        )
+
+    monkeypatch.setattr(
+        "Medical_Wizard_MCP.tools.search.registry.search_trials",
+        fake_search_trials,
+    )
+
+    response = await search_trials(query="ROSETTA Lung clinical trial")
+
+    queried_variants = [str(call["query"]) for call in captured_calls]
+    assert "ROSETTA Lung clinical trial" in queried_variants
+    assert any(variant.lower() == "rosetta-lung" for variant in queried_variants)
+    assert response["count"] == 1
+    assert response["_meta"]["requested_filters"]["effective_query"] == "ROSETTA Lung clinical trial"
+    assert response["_meta"]["evidence_trace"][0]["filters"]["query_variants"]
+    assert response["results"][0]["brief_title"] == "ROSETTA-Lung"
 
 
 @pytest.mark.asyncio
@@ -91,6 +138,7 @@ async def test_get_trial_details_returns_detail_envelope(monkeypatch: pytest.Mon
     assert response["_meta"]["evidence_sources"] == ["clinicaltrials_gov"]
     assert response["_meta"]["evidence_trace"][0]["step"] == "fetch_trial_detail"
     assert response["_meta"]["evidence_refs"][0]["url"].endswith("/NCT00000123")
+    assert response["result"]["source_refs"][0]["id"] == "NCT00000123"
     assert response["result"]["nct_id"] == "NCT00000123"
     assert "message" not in response
 
@@ -175,6 +223,7 @@ async def test_list_tools_use_standard_envelope(monkeypatch: pytest.MonkeyPatch)
     assert publication_response["_meta"]["routing_hints"]["parameter_aliases"]["term"] == "query"
     assert publication_response["_meta"]["evidence_sources"] == ["pubmed"]
     assert publication_response["_meta"]["evidence_refs"][0]["url"] == "https://pubmed.ncbi.nlm.nih.gov/12345/"
+    assert publication_response["results"][0]["source_refs"][0]["id"] == "12345"
     assert publication_response["results"][0]["pmid"] == "12345"
     assert publication_response["results"][0]["doi"] == "10.1000/example"
 
@@ -298,6 +347,81 @@ async def test_search_preprints_returns_standard_envelope(
     assert response["_meta"]["evidence_refs"][0]["url"] == "https://doi.org/10.1101/2024.03.01.123456"
     assert response["results"][0]["pmid"] is None
     assert response["results"][0]["doi"] == "10.1101/2024.03.01.123456"
+
+
+@pytest.mark.asyncio
+async def test_search_conference_abstracts_returns_standard_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_search_conference_abstracts(**_: object) -> ListQueryResult[ConferenceAbstract]:
+        return ListQueryResult(
+            queried_sources=["openalex", "crossref"],
+            warnings=[],
+            items=[
+                ConferenceAbstract(
+                    source="crossref",
+                    source_id="10.0000/meeting-tips",
+                    title="ASCO Annual Meeting Tips",
+                    authors=["Editorial Team"],
+                    conference_name="ASCO Annual Meeting",
+                    conference_series="ASCO",
+                    presentation_type=None,
+                    abstract_number=None,
+                    publication_year=2025,
+                    publication_date="2025-06-01",
+                    abstract="",
+                    doi="10.0000/meeting-tips",
+                    url="https://doi.org/10.0000/meeting-tips",
+                    journal="Oncology News",
+                ),
+                ConferenceAbstract(
+                    source="openalex",
+                    source_id="https://openalex.org/W123",
+                    title="Late-breaking ASCO abstract for individualized neoantigen therapy in melanoma",
+                    authors=["Alice Smith", "Bob Jones"],
+                    conference_name="ASCO Annual Meeting",
+                    conference_series="ASCO",
+                    presentation_type="late-breaking abstract",
+                    abstract_number="2501",
+                    publication_year=2025,
+                    publication_date="2025-06-01",
+                    abstract="Encouraging translational signal in biomarker-enriched cohorts.",
+                    doi="10.1200/JCO.2025.2501",
+                    url="https://doi.org/10.1200/JCO.2025.2501",
+                    journal="Journal of Clinical Oncology",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "Medical_Wizard_MCP.tools.conferences.registry.search_conference_abstracts",
+        fake_search_conference_abstracts,
+    )
+
+    response = await search_conference_abstracts(
+        term="neoantigen therapy",
+        indication="melanoma",
+        conference_series=["ASCO", "AACR"],
+    )
+
+    assert response["count"] == 1
+    assert response["_meta"]["tool"] == "search_conference_abstracts"
+    assert response["_meta"]["tool_family"] == "conferences"
+    assert response["_meta"]["output_kind"] == "raw"
+    assert response["_meta"]["queried_sources"] == ["crossref", "openalex"]
+    assert response["_meta"]["requested_filters"]["effective_query"] == "neoantigen therapy melanoma"
+    assert response["_meta"]["requested_filters"]["conference_series"] == ["ASCO", "AACR"]
+    assert response["_meta"]["requested_filters"]["minimum_conference_result_score"] == 0.55
+    assert response["_meta"]["evidence_trace"][0]["step"] == "search_conference_sources"
+    assert response["_meta"]["evidence_trace"][1]["step"] == "rank_conference_results"
+    assert any(
+        ref["url"] == "https://doi.org/10.1200/JCO.2025.2501"
+        for ref in response["_meta"]["evidence_refs"]
+    )
+    assert response["results"][0]["title"].startswith("Late-breaking ASCO abstract")
+    assert response["results"][0]["conference_series"] == "ASCO"
+    assert response["results"][0]["conference_result_score"] >= 0.55
+    assert response["results"][0]["source_refs"][0]["id"] == "https://openalex.org/W123"
 
 
 @pytest.mark.asyncio

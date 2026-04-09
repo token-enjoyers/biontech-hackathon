@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 
-from ..models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
+from ..models import ApprovedDrug, ConferenceAbstract, Publication, TrialDetail, TrialSummary, TrialTimeline
 from .base import BaseSource
 
 logger = logging.getLogger(__name__)
@@ -155,6 +155,7 @@ class SourceRegistry:
     async def search_trials(
         self,
         condition: str,
+        query: str | None = None,
         phase: str | None = None,
         status: str | None = None,
         sponsor: str | None = None,
@@ -169,6 +170,7 @@ class SourceRegistry:
             *[
                 source.search_trials(
                     condition=condition,
+                    query=query,
                     phase=phase,
                     status=status,
                     sponsor=sponsor,
@@ -430,6 +432,66 @@ class SourceRegistry:
             key_fn=lambda drug: getattr(drug, "approval_id", None)
             or getattr(drug, "generic_name", None)
             or getattr(drug, "brand_name", None),
+        )
+
+        return ListQueryResult(
+            items=merged_results[:max_results],
+            queried_sources=[source.name for source in sources],
+            warnings=warnings,
+        )
+
+    async def search_conference_abstracts(
+        self,
+        query: str,
+        conference_series: list[str] | None = None,
+        max_results: int = 10,
+        year_from: int | None = None,
+    ) -> ListQueryResult[ConferenceAbstract]:
+        await self.initialize_all()
+        sources, warnings = self._sources_for("conference_abstract_search")
+
+        results: list[ConferenceAbstract] = []
+        outcomes = await asyncio.gather(
+            *[
+                source.search_conference_abstracts(
+                    query=query,
+                    conference_series=conference_series,
+                    max_results=max_results,
+                    year_from=year_from,
+                )
+                for source in sources
+            ],
+            return_exceptions=True,
+        )
+
+        for source, outcome in zip(sources, outcomes):
+            if isinstance(outcome, Exception):
+                warnings.append(
+                    SourceWarning(
+                        source=source.name,
+                        stage="search_conference_abstracts",
+                        error=str(outcome) or outcome.__class__.__name__,
+                    )
+                )
+                logger.error("Source %s failed during search_conference_abstracts: %s", source.name, outcome)
+                continue
+
+            results.extend(outcome)
+
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda item: getattr(item, "doi", None)
+            or "|".join(
+                part
+                for part in [
+                    getattr(item, "conference_series", None) or getattr(item, "conference_name", None),
+                    getattr(item, "title", None),
+                    str(getattr(item, "publication_year", "") or ""),
+                ]
+                if part
+            ).lower()
+            or getattr(item, "source_id", None),
         )
 
         return ListQueryResult(

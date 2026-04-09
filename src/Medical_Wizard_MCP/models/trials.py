@@ -56,6 +56,23 @@ class Publication(BaseModel):
     mesh_terms: list[str] = []
 
 
+class ConferenceAbstract(BaseModel):
+    source: str
+    source_id: str
+    title: str
+    authors: list[str] = []
+    conference_name: str
+    conference_series: str | None = None
+    presentation_type: str | None = None
+    abstract_number: str | None = None
+    publication_year: int | None = None
+    publication_date: str | None = None
+    abstract: str = ""
+    doi: str | None = None
+    url: str | None = None
+    journal: str | None = None
+
+
 class ApprovedDrug(BaseModel):
     source: str
     approval_id: str

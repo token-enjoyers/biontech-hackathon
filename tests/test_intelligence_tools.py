@@ -118,6 +118,23 @@ DETAIL_C = TrialDetail(
     overall_officials=["Dr. Carol Lee"],
 )
 
+ROSETTA_DETAIL = TrialDetail(
+    source="clinicaltrials_gov",
+    nct_id="NCT09990001",
+    brief_title="ROSETTA-Lung",
+    official_title="A phase 3 study of ROSETTA-Lung in advanced NSCLC",
+    phase="Phase 3",
+    overall_status="COMPLETED",
+    lead_sponsor="BioNTech",
+    interventions=["BNT327"],
+    primary_outcomes=["Overall survival"],
+    enrollment_count=420,
+    arms=["ROSETTA-Lung arm", "Pembrolizumab comparator arm"],
+    secondary_outcomes=["Progression-free survival"],
+    study_type="INTERVENTIONAL",
+    conditions=["NSCLC"],
+)
+
 TIMELINE_A = TrialTimeline(
     source="clinicaltrials_gov",
     nct_id="NCT00000111",
@@ -400,3 +417,71 @@ async def test_extended_intelligence_tools_return_expected_shapes(monkeypatch: p
     assert safety["result"]["signals"]
     assert sites["result"]["countries"]
     assert signals["result"]["trial_activity"]["upcoming_readouts"]
+
+
+@pytest.mark.asyncio
+async def test_link_trial_evidence_uses_trial_titles_for_publication_and_preprint_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication_queries: list[str] = []
+    preprint_queries: list[str] = []
+
+    async def fake_get_trial_details(nct_id: str) -> DetailQueryResult[TrialDetail]:
+        assert nct_id == "NCT09990001"
+        return DetailQueryResult(item=ROSETTA_DETAIL, queried_sources=["clinicaltrials_gov"], warnings=[])
+
+    async def fake_search_publications(**kwargs: object) -> ListQueryResult[Publication]:
+        query = str(kwargs.get("query"))
+        publication_queries.append(query)
+        items = []
+        if query == "ROSETTA-Lung":
+            items = [
+                Publication(
+                    source="pubmed",
+                    pmid="424242",
+                    title="Latest ROSETTA-Lung efficacy update",
+                    authors=["Example Author"],
+                    journal="Journal of Thoracic Oncology",
+                    pub_date="2026-02-10",
+                    abstract="Updated phase 3 efficacy results.",
+                    doi="10.1000/rosetta.latest",
+                    mesh_terms=["NSCLC"],
+                )
+            ]
+        return ListQueryResult(queried_sources=["pubmed"], warnings=[], items=items)
+
+    async def fake_search_preprints(**kwargs: object) -> ListQueryResult[Publication]:
+        query = str(kwargs.get("query"))
+        preprint_queries.append(query)
+        items = []
+        if query == "ROSETTA-Lung":
+            items = [
+                Publication(
+                    source="medrxiv",
+                    title="ROSETTA-Lung translational biomarker preprint",
+                    authors=["Example Author"],
+                    journal="medRxiv",
+                    pub_date="2026-01-01",
+                    abstract="Biomarker analysis for ROSETTA-Lung.",
+                    doi="10.1101/2026.01.01.999999",
+                    mesh_terms=["NSCLC"],
+                )
+            ]
+        return ListQueryResult(queried_sources=["medrxiv"], warnings=[], items=items)
+
+    async def fake_search_approved_drugs(**_: object) -> ListQueryResult[ApprovedDrug]:
+        return ListQueryResult(queried_sources=["openfda"], warnings=[], items=[])
+
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.get_trial_details", fake_get_trial_details)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_publications", fake_search_publications)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_preprints", fake_search_preprints)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_approved_drugs", fake_search_approved_drugs)
+
+    response = await link_trial_evidence(nct_id="NCT09990001")
+
+    assert "ROSETTA-Lung" in publication_queries
+    assert "ROSETTA-Lung" in preprint_queries
+    assert response["result"]["evidence_summary"]["publication_count"] == 1
+    assert response["result"]["evidence_summary"]["preprint_count"] == 1
+    assert response["result"]["queries_used"]["publication_queries"][0] == "ROSETTA-Lung"
+    assert response["result"]["queries_used"]["preprint_queries"][0] == "ROSETTA-Lung"

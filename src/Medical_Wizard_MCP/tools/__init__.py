@@ -1,1 +1,1 @@
-from . import audit, catalog, drugs, intelligence, monitoring, publications, search, timelines  # noqa: F401
+from . import audit, catalog, conferences, drugs, intelligence, monitoring, publications, search, timelines  # noqa: F401

@@ -353,23 +353,25 @@ class ClinicalTrialsSource(BaseSource):
     async def search_trials(
         self,
         condition: str,
+        query: str | None = None,
         phase: str | None = None,
         status: str | None = None,
         sponsor: str | None = None,
         intervention: str | None = None,
         max_results: int = 10,
     ) -> list[TrialSummary]:
-        params: dict[str, Any] = {
-            "query.cond": condition,
-            "format": "json",
-        }
+        params: dict[str, Any] = {"format": "json"}
+
+        if condition:
+            params["query.cond"] = condition
 
         if phase:
             self._apply_phase_filter(params, phase)
         if status:
             params["filter.overallStatus"] = status.upper()
-        if sponsor:
-            params["query.term"] = sponsor
+        query_terms = " ".join(part for part in [query, sponsor] if part)
+        if query_terms:
+            params["query.term"] = query_terms
         if intervention:
             params["query.intr"] = intervention
 

@@ -34,15 +34,17 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "output_kind": "raw",
         "stability": "stable",
         "workflow_position": "primary",
-        "canonical_parameters": ["indication", "phase", "status", "sponsor", "intervention", "max_results"],
-        "parameter_aliases": {"condition": "indication"},
+        "canonical_parameters": ["query", "term", "indication", "phase", "status", "sponsor", "intervention", "max_results"],
+        "parameter_aliases": {"condition": "indication", "term": "query"},
         "requires_identifiers": [],
         "use_when": [
             "You need candidate clinical trials for a disease area.",
+            "You need to resolve a named clinical trial, study alias, or acronym into trial records.",
             "You want to discover competitors before deeper analysis.",
         ],
         "avoid_when": [
             "You already have an NCT ID and need full study details.",
+            "The user asks for latest publications or preprints and you have not called literature tools yet.",
         ],
         "typical_next_tools": [
             "get_trial_details",
@@ -63,6 +65,7 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "use_when": [
             "You already know the trial NCT ID.",
             "You need eligibility, arms, conditions, or other detailed fields.",
+            "You need comparator or control arm labels from one specific study.",
         ],
         "avoid_when": [
             "You are still searching broadly and do not have a trial identifier yet.",
@@ -107,6 +110,7 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "use_when": [
             "You need peer-reviewed literature or PubMed evidence.",
             "You want publications linked to a mechanism, indication, or trial.",
+            "The user asks for the latest publications on a named clinical trial after you have resolved the trial identity.",
         ],
         "avoid_when": [
             "You want unpublished or early-stage evidence only.",
@@ -129,6 +133,7 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "use_when": [
             "You need emerging evidence before peer review.",
             "You want early competitive or translational signals.",
+            "The user asks for newer preprints tied to a named clinical trial after you have resolved the trial identity.",
         ],
         "avoid_when": [
             "You need established peer-reviewed evidence first.",
@@ -137,6 +142,37 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
             "search_publications",
             "summarize_safety_signals",
             "watch_indication_signals",
+        ],
+    },
+    "search_conference_abstracts": {
+        "category": "evidence",
+        "family": "conferences",
+        "output_kind": "raw",
+        "stability": "stable",
+        "workflow_position": "primary",
+        "canonical_parameters": [
+            "query",
+            "indication",
+            "intervention",
+            "term",
+            "nct_id",
+            "conference_series",
+            "year_from",
+            "max_results",
+        ],
+        "parameter_aliases": {"term": "query"},
+        "requires_identifiers": [],
+        "use_when": [
+            "You need early congress signals before journal publication.",
+            "You want ASCO, AACR, ESMO, or SITC abstract-like evidence for a mechanism, indication, or trial.",
+        ],
+        "avoid_when": [
+            "You only need peer-reviewed literature and do not want conference-stage evidence.",
+        ],
+        "typical_next_tools": [
+            "search_publications",
+            "get_document_passages",
+            "verify_claim_evidence",
         ],
     },
     "search_approved_drugs": {
@@ -395,9 +431,11 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "requires_identifiers": ["nct_id"],
         "use_when": [
             "You want a quick cross-source bundle for one known trial.",
+            "You already resolved a named study to an NCT ID and need latest publications or preprints connected to that trial.",
         ],
         "avoid_when": [
             "You need exact citation matching rather than query-based associations.",
+            "You have not resolved the trial identity to an NCT ID yet.",
         ],
         "typical_next_tools": [
             "search_publications",
