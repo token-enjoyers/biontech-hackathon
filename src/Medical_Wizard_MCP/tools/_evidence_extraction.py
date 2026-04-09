@@ -168,6 +168,17 @@ def find_matching_passages(
     return matches[:max_passages]
 
 
+def _claim_overlap(claim: str, passage: str) -> tuple[int, float]:
+    claim_terms = list(dict.fromkeys(tokenize_query(claim)))
+    if not claim_terms:
+        return 0, 0.0
+
+    passage_lower = passage.lower()
+    matched_terms = [term for term in claim_terms if term in passage_lower]
+    overlap_count = len(matched_terms)
+    return overlap_count, overlap_count / len(claim_terms)
+
+
 def classify_claim_passage(claim: str, passage: str) -> str:
     claim_lower = claim.lower()
     passage_lower = passage.lower()
@@ -175,12 +186,20 @@ def classify_claim_passage(claim: str, passage: str) -> str:
     claim_negative = any(token in claim_lower for token in NEGATIVE_CUES)
     passage_positive = any(token in passage_lower for token in POSITIVE_CUES)
     passage_negative = any(token in passage_lower for token in NEGATIVE_CUES)
+    overlap_count, overlap_ratio = _claim_overlap(claim, passage)
+
+    if overlap_count == 0:
+        return "unclear"
 
     if claim_positive and passage_negative:
         return "conflicting"
     if claim_negative and passage_positive:
         return "conflicting"
-    if passage_positive or passage_negative or re.search(r"\d", passage):
+    if claim_positive:
+        return "supporting" if passage_positive and overlap_ratio >= 0.4 else "unclear"
+    if claim_negative:
+        return "supporting" if passage_negative and overlap_ratio >= 0.4 else "unclear"
+    if overlap_ratio >= 0.6 and (passage_positive or passage_negative or re.search(r"\d", passage)):
         return "supporting"
     return "unclear"
 

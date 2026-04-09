@@ -110,7 +110,6 @@ results: list[tuple[str, bool, str]] = []
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    status = PASS if condition else FAIL
     marker = "  [OK]" if condition else "  [!!]"
     print(f"{marker} {name}" + (f": {detail}" if detail else ""))
     results.append((name, condition, detail))
@@ -311,11 +310,11 @@ async def main() -> None:
     print("\n" + "=" * 60)
     print(f"Checks:  {passed}/{total} passed")
     if failed_checks:
-        print(f"\033[31mFailed checks:\033[0m")
+        print("\033[31mFailed checks:\033[0m")
         for name in failed_checks:
             print(f"  - {name}")
     if failed_tests:
-        print(f"\033[31mCrashed tests:\033[0m")
+        print("\033[31mCrashed tests:\033[0m")
         for name in failed_tests:
             print(f"  - {name}")
     if not failed_checks and not failed_tests:

@@ -3,8 +3,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from Medical_Wizard_MCP.app import mcp
 from Medical_Wizard_MCP.models import TrialSummary
-from Medical_Wizard_MCP.sources.openfda import BASE_URL, OpenFDASource
+from Medical_Wizard_MCP.server import AuditContextMiddleware
+from Medical_Wizard_MCP.sources.openfda import BASE_URL, OpenFDASource, _build_search_query
 
 
 def test_trial_summary_does_not_include_openfda_only_fields() -> None:
@@ -26,6 +28,19 @@ def test_trial_summary_does_not_include_openfda_only_fields() -> None:
     assert "product_type" not in payload
     assert "mechanism_of_action" not in payload
     assert "warnings" not in payload
+
+
+def test_app_registers_audit_context_middleware() -> None:
+    assert any(isinstance(middleware, AuditContextMiddleware) for middleware in mcp.middleware)
+
+
+def test_openfda_build_search_query_quotes_multiword_conditions() -> None:
+    query = _build_search_query("lung cancer", sponsor="Merck", intervention="pembrolizumab")
+
+    assert 'indications_and_usage:"lung cancer"' in query
+    assert "(indications_and_usage:lung AND indications_and_usage:cancer)" in query
+    assert 'openfda.manufacturer_name:"Merck"' in query
+    assert 'openfda.substance_name:"pembrolizumab"' in query
 
 
 @pytest.mark.asyncio

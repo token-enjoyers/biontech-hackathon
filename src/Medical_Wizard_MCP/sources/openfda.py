@@ -21,6 +21,17 @@ def _escape_lucene(value: str) -> str:
     return "".join(f"\\{c}" if c in _LUCENE_SPECIAL else c for c in value)
 
 
+def _condition_clause(condition: str) -> str:
+    cleaned = " ".join(condition.split())
+    escaped = _escape_lucene(cleaned)
+    tokens = [token for token in cleaned.split() if token]
+    if len(tokens) <= 1:
+        return f"indications_and_usage:{escaped}"
+
+    escaped_tokens = [f"indications_and_usage:{_escape_lucene(token)}" for token in tokens]
+    return f'(indications_and_usage:"{escaped}") OR ({" AND ".join(escaped_tokens)})'
+
+
 def _build_search_query(
     condition: str,
     sponsor: str | None = None,
@@ -35,7 +46,7 @@ def _build_search_query(
 
     phase and status are not applicable to FDA drug labels and are ignored.
     """
-    clauses: list[str] = [f"indications_and_usage:{_escape_lucene(condition)}"]
+    clauses: list[str] = [_condition_clause(condition)]
 
     if sponsor:
         clauses.append(f'openfda.manufacturer_name:"{_escape_lucene(sponsor)}"')

@@ -278,6 +278,23 @@ BURDEN_ES = OncologyBurdenRecord(
     population=48000000.0,
 )
 
+BURDEN_USA = OncologyBurdenRecord(
+    source="bigquery_oncology",
+    dataset="oncology_burden_search",
+    study="Burden dataset",
+    registry="US Registry",
+    country="United States of America",
+    sex="All",
+    site="Lung",
+    indicator="Mortality",
+    geo_code="US",
+    year=2024,
+    age_min=0,
+    age_max=120,
+    cases=11000.0,
+    population=333000000.0,
+)
+
 APPROVED_DRUG_1 = ApprovedDrug(
     source="openfda",
     approval_id="BLA123456",
@@ -827,6 +844,39 @@ async def test_burden_vs_trial_footprint_maps_subtype_to_parent_site(
     assert response["result"]["burden_site_used"] == "Lung"
     assert response["result"]["country_rankings"][0]["country"] in {"France", "Spain"}
     assert response["result"]["country_rankings"][0]["footprint_gap_score"] >= response["result"]["country_rankings"][-1]["footprint_gap_score"]
+
+
+@pytest.mark.asyncio
+async def test_burden_vs_trial_footprint_normalizes_country_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_search_oncology_burden(**_: object) -> ListQueryResult[OncologyBurdenRecord]:
+        return ListQueryResult(
+            queried_sources=["bigquery_oncology"],
+            warnings=[],
+            items=[BURDEN_USA],
+        )
+
+    async def fake_search_trials(**_: object) -> ListQueryResult[TrialSummary]:
+        return ListQueryResult(queried_sources=["clinicaltrials_gov"], warnings=[], items=[TRIAL_A, TRIAL_C])
+
+    async def fake_get_trial_details(nct_id: str) -> DetailQueryResult[TrialDetail]:
+        detail_map = {
+            DETAIL_A.nct_id: DETAIL_A,
+            DETAIL_C.nct_id: DETAIL_C,
+        }
+        return DetailQueryResult(item=detail_map.get(nct_id), queried_sources=["clinicaltrials_gov"], warnings=[])
+
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_oncology_burden", fake_search_oncology_burden)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_trials", fake_search_trials)
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.get_trial_details", fake_get_trial_details)
+
+    response = await burden_vs_trial_footprint(indication="NSCLC")
+    usa_row = response["result"]["country_rankings"][0]
+
+    assert usa_row["country"] == "United States of America"
+    assert usa_row["visible_trial_count"] == 2
+    assert usa_row["visible_site_mentions"] == 2
 
 
 @pytest.mark.asyncio

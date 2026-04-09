@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
@@ -54,6 +55,21 @@ BURDEN_SITE_HINTS = {
     "pancreatic cancer": "Pancreas",
     "pancreas cancer": "Pancreas",
     "colorectal cancer": "Colon, rectum, anus",
+}
+
+COUNTRY_ALIASES = {
+    "u s": "united states",
+    "u s a": "united states",
+    "usa": "united states",
+    "us": "united states",
+    "united states of america": "united states",
+    "u k": "united kingdom",
+    "uk": "united kingdom",
+    "great britain": "united kingdom",
+    "republic of korea": "south korea",
+    "korea republic of": "south korea",
+    "korea south": "south korea",
+    "russian federation": "russia",
 }
 
 
@@ -113,6 +129,17 @@ def _clean_query_text(value: str | None) -> str:
 
 def _clean_lower_text(value: str | None) -> str:
     return _clean_query_text(value).lower()
+
+
+def _country_join_key(value: str | None) -> str:
+    cleaned = _clean_query_text(value)
+    if not cleaned:
+        return ""
+
+    normalized = re.sub(r"[^a-z0-9]+", " ", cleaned.casefold()).strip()
+    normalized = re.sub(r"\bthe\b", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return COUNTRY_ALIASES.get(normalized, normalized)
 
 
 def _dedupe_publications(items: list[Publication]) -> list[Publication]:
@@ -675,7 +702,6 @@ def _forecast_rows_from_trials(
     rows: list[dict[str, Any]] = []
     for trial in trials:
         known_date = trial.primary_completion_date or trial.completion_date
-        months_to_known = months_until(known_date)
         code = phase_code(trial.phase)
 
         estimated_date = None
@@ -2389,8 +2415,9 @@ Avoid this when you only need raw burden rows or raw trial/site data without the
     burden_by_country: dict[str, dict[str, Any]] = {}
     for row in burden_payload:
         country = _clean_query_text(row.get("country")) or "Unknown"
+        country_key = _country_join_key(country) or "unknown"
         entry = burden_by_country.setdefault(
-            country,
+            country_key,
             {
                 "country": country,
                 "cases": 0.0,
@@ -2418,8 +2445,11 @@ Avoid this when you only need raw burden rows or raw trial/site data without the
         trial_payload = detail.model_dump()
         unique_countries = unique_nonempty(detail.location_countries)
         for country in unique_countries:
+            country_key = _country_join_key(country)
+            if not country_key:
+                continue
             entry = trial_footprint_by_country.setdefault(
-                country,
+                country_key,
                 {
                     "visible_trials": set(),
                     "site_mentions": 0,
@@ -2455,9 +2485,9 @@ Avoid this when you only need raw burden rows or raw trial/site data without the
     )
 
     country_rankings: list[dict[str, Any]] = []
-    for country, burden_entry in burden_by_country.items():
+    for country_key, burden_entry in burden_by_country.items():
         footprint_entry = trial_footprint_by_country.get(
-            country,
+            country_key,
             {"visible_trials": set(), "site_mentions": 0, "sponsors": set(), "reference_trials": []},
         )
         visible_trials = len(footprint_entry["visible_trials"])
@@ -2481,7 +2511,7 @@ Avoid this when you only need raw burden rows or raw trial/site data without the
         footprint_gap_score = max(0.05, min(0.99, burden_index + whitespace_bonus - footprint_penalty))
         country_rankings.append(
             {
-                "country": country,
+                "country": burden_entry["country"],
                 "burden_cases": _safe_round(burden_entry["cases"]),
                 "population": _safe_round(burden_entry["population"]),
                 "burden_per_100k": _safe_round(burden_per_100k, 2),

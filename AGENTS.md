@@ -17,7 +17,9 @@ Repo-specific guidance for coding agents working in this project.
 - Preferred local debug loop:
   - `FASTMCP_LOG_LEVEL=DEBUG ./local-dev/run-server.sh`
   - `npx -y @modelcontextprotocol/inspector`
-- `FastMCP` host, port, and mount path are configured in `src/Medical_Wizard_MCP/server.py`, not passed to `mcp.run()`
+- Shared `FastMCP` instance lives in `src/Medical_Wizard_MCP/app.py`
+- Audit/request-context middleware lives in `src/Medical_Wizard_MCP/server.py`
+- Host, port, and transport are provided by the runtime environment and `mcp.run(...)`, not stored as constants in `server.py`
 
 ## Architecture Intent
 
@@ -40,15 +42,17 @@ Repo-specific guidance for coding agents working in this project.
   Thin MCP wrappers around registry calls
 - `src/Medical_Wizard_MCP/models/`
   Shared normalized response models
+- `src/Medical_Wizard_MCP/app.py`
+  Shared `FastMCP` instance
 - `src/Medical_Wizard_MCP/server.py`
-  Shared `FastMCP` instance and transport configuration
+  FastMCP middleware and server-side request context helpers
 
 ## Implementation Patterns
 
 - `BaseSource` defines the shared source interface.
 - Source capability methods intentionally default to `[]` or `None`; a source only overrides what it supports.
 - New sources should normally be added by implementing `BaseSource` and registering them in `__main__.py`.
-- Tool modules register via `@mcp.tool()` using the shared `mcp` from `server.py`.
+- Tool modules register via `@mcp.tool()` using the shared `mcp` from `app.py`.
 - Tool registration happens at import time through `src/Medical_Wizard_MCP/tools/__init__.py`.
 
 ## Editing Guidance

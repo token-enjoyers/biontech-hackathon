@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from Medical_Wizard_MCP.models import ApprovedDrug, Publication, TrialDetail, TrialSummary
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult
+from Medical_Wizard_MCP.tools._evidence_extraction import classify_claim_passage
 from Medical_Wizard_MCP.tools.audit import (
     extract_structured_evidence,
     get_document_passages,
     verify_claim_evidence,
 )
 from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
-from Medical_Wizard_MCP.tools.monitoring import track_indication_changes
+from Medical_Wizard_MCP.tools.monitoring import _since_date, track_indication_changes
 from Medical_Wizard_MCP.tools.publications import search_preprints, search_publications
 
 
@@ -129,6 +132,21 @@ async def test_track_indication_changes_filters_recent_records(monkeypatch: pyte
     assert response["_meta"]["evidence_trace"][-1]["step"] == "filter_recent_changes"
 
 
+def test_since_date_handles_leap_day_rollover(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001
+            return datetime(2024, 2, 29, tzinfo=tz)
+
+        @classmethod
+        def strptime(cls, value: str, pattern: str):  # noqa: ANN001
+            return datetime.strptime(value, pattern)
+
+    monkeypatch.setattr("Medical_Wizard_MCP.tools.monitoring.datetime", FrozenDateTime)
+
+    assert _since_date(None, 1).date().isoformat() == "2023-02-28"
+
+
 @pytest.mark.asyncio
 async def test_audit_tools_bind_claims_and_extract_findings(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_get_trial_details(_: str) -> DetailQueryResult[TrialDetail]:
@@ -175,3 +193,10 @@ async def test_audit_tools_bind_claims_and_extract_findings(monkeypatch: pytest.
     assert verification_response["result"]["verdict"] in {"supported", "mixed"}
     assert len(verification_response["result"]["supporting_evidence"]) >= 1
     assert verification_response["_meta"]["evidence_trace"][-1]["step"] == "bind_claim_to_passages"
+
+
+def test_claim_classifier_does_not_treat_any_numeric_overlap_as_support() -> None:
+    claim = "mRNA vaccine improved objective response rate in NSCLC"
+    passage = "The median age was 64 years and 82 patients were enrolled across 12 sites."
+
+    assert classify_claim_passage(claim, passage) == "unclear"

@@ -68,7 +68,11 @@ def _since_date(since: str | None, recent_years: int) -> datetime:
         if parsed is not None:
             return parsed
     current = datetime.now(UTC)
-    return current.replace(year=current.year - max(recent_years, 1))
+    target_year = current.year - max(recent_years, 1)
+    try:
+        return current.replace(year=target_year)
+    except ValueError:
+        return current.replace(year=target_year, month=2, day=28)
 
 
 def _filter_by_date(items: list[dict[str, Any]], *field_names: str, since_dt: datetime) -> list[dict[str, Any]]:

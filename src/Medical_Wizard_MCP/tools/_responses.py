@@ -10,6 +10,9 @@ from typing import Any
 from ._evidence_refs import document_refs_from_nested_data
 from ._tool_catalog import OUTPUT_KIND_NOTES, get_tool_metadata
 
+_resource = None
+_otel_available = False
+
 try:
     import grpc
     from opentelemetry.proto.collector.logs.v1 import logs_service_pb2

@@ -283,8 +283,10 @@ class SourceRegistry:
     async def get_trial_details(self, nct_id: str) -> DetailQueryResult[TrialDetail]:
         await self.initialize_all()
         sources, warnings = self._sources_for("trial_details")
+        attempted_sources: list[str] = []
 
         for source in sources:
+            attempted_sources.append(source.name)
             try:
                 detail = await self._run_source_call(
                     source=source,
@@ -295,7 +297,7 @@ class SourceRegistry:
                 if detail is not None:
                     return DetailQueryResult(
                         item=detail,
-                        queried_sources=[item.name for item in sources],
+                        queried_sources=list(attempted_sources),
                         warnings=warnings,
                     )
             except Exception as exc:
@@ -310,7 +312,7 @@ class SourceRegistry:
 
         return DetailQueryResult(
             item=None,
-            queried_sources=[source.name for source in sources],
+            queried_sources=list(attempted_sources),
             warnings=warnings,
         )
 
