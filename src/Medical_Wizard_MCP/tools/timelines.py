@@ -56,6 +56,19 @@ Args:
                 "status": status,
                 "max_results": max_results,
             },
+            evidence_sources=["tool_validation"],
+            evidence_trace=[
+                {
+                    "step": "validate_indication",
+                    "sources": ["tool_validation"],
+                    "note": "Rejected the request because no indication or condition filter was provided.",
+                    "filters": {
+                        "indication": indication,
+                        "condition": condition,
+                    },
+                    "output_kind": "raw",
+                }
+            ],
         )
 
     max_results = min(max_results, 30)
@@ -87,6 +100,29 @@ Args:
         coverage="Currently backed by ClinicalTrials.gov timeline data.",
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            {
+                "step": "fetch_trial_timelines",
+                "sources": response.queried_sources,
+                "note": "Retrieved start, completion, and enrollment fields for matching trials.",
+                "filters": {
+                    "indication": resolved_indication,
+                    "sponsor": sponsor,
+                    "phase": phase,
+                    "status": status,
+                    "max_results": max_results,
+                },
+                "output_kind": "raw",
+            },
+            {
+                "step": "derive_duration_metrics",
+                "sources": response.queried_sources,
+                "note": "Computed months-to-completion and months-since-start from normalized timeline dates.",
+                "filters": {"indication": resolved_indication},
+                "output_kind": "derived",
+            },
+        ],
         requested_filters={
             "indication": resolved_indication,
             "condition": condition,

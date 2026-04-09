@@ -283,6 +283,7 @@ async def test_analysis_tools_return_expected_shapes(monkeypatch: pytest.MonkeyP
     assert "TMB-high" in comparison["results"][0]["biomarkers"]
     assert density["result"]["distribution"]["mRNA vaccine"] >= 1
     assert gaps["_meta"]["output_kind"] == "heuristic"
+    assert gaps["_meta"]["evidence_trace"][-1]["step"] == "score_competition_gaps"
     assert gaps["result"]["gap_signals"]
     assert whitespaces["result"]["terminated_trials"]["count"] == 1
     assert whitespaces["_meta"]["deprecation"]["replacement_tool"] == "analyze_competition_gaps"
@@ -323,10 +324,12 @@ async def test_design_tools_return_recommendations(monkeypatch: pytest.MonkeyPat
 
     assert design["result"]["recommended_phase"] in {"PHASE1", "PHASE2"}
     assert design["result"]["recommendation_type"] == "heuristic_draft"
+    assert design["_meta"]["evidence_trace"][-1]["step"] == "generate_design_recommendation"
     assert design["result"]["confidence_score"] > 0
     assert "mRNA vaccine" in design["result"]["mechanism"]
     assert patient_profile["result"]["recommended_ecog"] == "0-1"
     assert patient_profile["result"]["recommendation_type"] == "heuristic_draft"
+    assert patient_profile["_meta"]["evidence_trace"][-1]["step"] == "generate_patient_profile"
     assert patient_profile["result"]["based_on_trials"] >= 1
     assert patient_profile["result"]["predictive_biomarkers"]
 
@@ -383,9 +386,11 @@ async def test_extended_intelligence_tools_return_expected_shapes(monkeypatch: p
     assert eligibility["result"]["common_inclusion_criteria"]
     assert endpoints["result"]["primary_endpoint_categories"]
     assert evidence["result"]["link_type"] == "query_based_association"
+    assert evidence["_meta"]["evidence_trace"][-1]["step"] == "assemble_evidence_links"
     assert evidence["result"]["evidence_summary"]["publication_count"] == 1
     assert segments["result"]["biomarker_segments"]
     assert readouts["result"]["forecast_type"] == "known_dates_plus_phase_benchmarks"
+    assert readouts["_meta"]["evidence_trace"][-1]["step"] == "forecast_readout_dates"
     assert readouts["result"]["forecast"]
     assert assets["result"]["assets"]
     assert safety["result"]["signals"]

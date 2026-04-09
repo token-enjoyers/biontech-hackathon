@@ -215,6 +215,15 @@ Every tool response follows this envelope:
     "data_type": "trial_search_results",
     "quality_note": "...",
     "coverage": "...",
+    "evidence_sources": ["clinicaltrials_gov"],
+    "evidence_trace": [
+      {
+        "step": "search_trial_registry",
+        "sources": ["clinicaltrials_gov"],
+        "note": "Fetched candidate trials matching the requested filters.",
+        "output_kind": "raw"
+      }
+    ],
     "requested_filters": {},
     "partial_failures": [],
     "routing_hints": {
@@ -228,6 +237,9 @@ Every tool response follows this envelope:
   "results": []
 }
 ```
+
+`evidence_sources` is the high-level provenance field to inspect first.
+`evidence_trace` shows which source(s) mattered at each internal processing step so an attached LLM or human reviewer can audit how the result was assembled and decide where to drill deeper.
 
 ---
 

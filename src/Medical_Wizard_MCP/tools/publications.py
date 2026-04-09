@@ -60,6 +60,16 @@ Args:
                 "year_from": year_from,
                 "max_results": max_results,
             },
+            evidence_sources=["tool_validation"],
+            evidence_trace=[
+                {
+                    "step": "validate_publication_query",
+                    "sources": ["tool_validation"],
+                    "note": "Rejected the request because no usable literature search terms were provided.",
+                    "filters": requested_filters,
+                    "output_kind": "raw",
+                }
+            ],
         )
 
     max_results = min(max_results, 15)
@@ -77,6 +87,20 @@ Args:
         coverage="Peer-reviewed publications indexed in PubMed for the given query and optional year filter.",
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            {
+                "step": "search_pubmed",
+                "sources": response.queried_sources,
+                "note": "Queried peer-reviewed literature sources for the effective search string.",
+                "filters": {
+                    **requested_filters,
+                    "year_from": year_from,
+                    "max_results": max_results,
+                },
+                "output_kind": "raw",
+            }
+        ],
         requested_filters={
             **requested_filters,
             "year_from": year_from,
@@ -139,6 +163,16 @@ Args:
                 "year_from": year_from,
                 "max_results": max_results,
             },
+            evidence_sources=["tool_validation"],
+            evidence_trace=[
+                {
+                    "step": "validate_preprint_query",
+                    "sources": ["tool_validation"],
+                    "note": "Rejected the request because no usable literature search terms were provided.",
+                    "filters": requested_filters,
+                    "output_kind": "raw",
+                }
+            ],
         )
 
     max_results = min(max_results, 15)
@@ -156,6 +190,20 @@ Args:
         coverage="Recent medRxiv preprints filtered locally against the requested query and optional year range.",
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
+        evidence_sources=response.queried_sources,
+        evidence_trace=[
+            {
+                "step": "search_medrxiv",
+                "sources": response.queried_sources,
+                "note": "Queried preprint sources for the effective search string.",
+                "filters": {
+                    **requested_filters,
+                    "year_from": year_from,
+                    "max_results": max_results,
+                },
+                "output_kind": "raw",
+            }
+        ],
         requested_filters={
             **requested_filters,
             "year_from": year_from,

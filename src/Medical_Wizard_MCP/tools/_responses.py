@@ -25,6 +25,40 @@ def _compact_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _normalize_source_list(sources: list[str] | None) -> list[str]:
+    return sorted({source for source in (sources or []) if isinstance(source, str) and source})
+
+
+def _normalize_evidence_trace(
+    trace: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in trace or []:
+        if not isinstance(item, dict):
+            continue
+        step = item.get("step")
+        if not isinstance(step, str) or not step:
+            continue
+
+        entry: dict[str, Any] = {"step": step}
+        sources = _normalize_source_list(item.get("sources"))
+        if sources:
+            entry["sources"] = sources
+
+        if isinstance(item.get("note"), str) and item["note"]:
+            entry["note"] = item["note"]
+
+        filters = _compact_filters(item.get("filters"))
+        if filters:
+            entry["filters"] = filters
+
+        if isinstance(item.get("output_kind"), str) and item["output_kind"]:
+            entry["output_kind"] = item["output_kind"]
+
+        normalized.append(entry)
+    return normalized
+
+
 def _list_meta(
     *,
     tool_name: str,
@@ -35,11 +69,33 @@ def _list_meta(
     queried_sources: list[str] | None = None,
     warnings: list[dict[str, str]] | None = None,
     requested_filters: dict[str, Any] | None = None,
+    evidence_sources: list[str] | None = None,
+    evidence_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     returned_sources = _unique_sources(items)
-    queried_sources = sorted(set(queried_sources or []))
+    queried_sources = _normalize_source_list(queried_sources)
+    normalized_trace = _normalize_evidence_trace(evidence_trace)
+    trace_sources = sorted(
+        {
+            source
+            for step in normalized_trace
+            for source in step.get("sources", [])
+            if isinstance(source, str) and source
+        }
+    )
+    evidence_sources = _normalize_source_list(evidence_sources)
+    evidence_basis = sorted(set(evidence_sources + returned_sources + queried_sources + trace_sources))
     source_basis = returned_sources or queried_sources
     tool_metadata = get_tool_metadata(tool_name)
+    if not normalized_trace and evidence_basis:
+        fallback_step: dict[str, Any] = {
+            "step": "tool_result",
+            "sources": evidence_basis,
+            "note": "Result assembled from the relevant sources reported for this tool call.",
+        }
+        if tool_metadata and isinstance(tool_metadata.get("output_kind"), str):
+            fallback_step["output_kind"] = tool_metadata["output_kind"]
+        normalized_trace = [fallback_step]
     if len(source_basis) == 1:
         source_label = source_basis[0]
     elif len(source_basis) > 1:
@@ -53,6 +109,8 @@ def _list_meta(
         "sources": returned_sources,
         "returned_sources": returned_sources,
         "queried_sources": queried_sources,
+        "evidence_sources": evidence_basis,
+        "evidence_trace": normalized_trace,
         "data_type": data_type,
         "result_schema_version": "2.0",
         "quality_note": quality_note,
@@ -94,6 +152,8 @@ def list_response(
     queried_sources: list[str] | None = None,
     warnings: list[dict[str, str]] | None = None,
     requested_filters: dict[str, Any] | None = None,
+    evidence_sources: list[str] | None = None,
+    evidence_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "_meta": _list_meta(
@@ -105,6 +165,8 @@ def list_response(
             queried_sources=queried_sources,
             warnings=warnings,
             requested_filters=requested_filters,
+            evidence_sources=evidence_sources,
+            evidence_trace=evidence_trace,
         ),
         "count": len(items),
         "results": items,
@@ -122,6 +184,8 @@ def detail_response(
     queried_sources: list[str] | None = None,
     warnings: list[dict[str, str]] | None = None,
     requested_filters: dict[str, Any] | None = None,
+    evidence_sources: list[str] | None = None,
+    evidence_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     items = [item] if item is not None else []
     payload: dict[str, Any] = {
@@ -134,6 +198,8 @@ def detail_response(
             queried_sources=queried_sources,
             warnings=warnings,
             requested_filters=requested_filters,
+            evidence_sources=evidence_sources,
+            evidence_trace=evidence_trace,
         ),
         "result": item,
     }
