@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from clinical_trials_mcp.sources.pubmed import BASE_URL, PubMedSource
+from Medical_Wizard_MCP.sources.pubmed import BASE_URL, PubMedSource
 
 
 PUBMED_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -104,7 +104,7 @@ async def test_search_publications_two_step_flow(monkeypatch: pytest.MonkeyPatch
     )
     source._api_key = None
     source._email = "test@example.com"
-    monkeypatch.setattr("clinical_trials_mcp.sources.pubmed.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("Medical_Wizard_MCP.sources.pubmed.asyncio.sleep", fake_sleep)
 
     results = await source.search_publications(
         "mrna vaccine",
@@ -191,7 +191,7 @@ async def test_search_publications_raises_clear_error_on_invalid_efetch_xml(
     )
     source._api_key = None
     source._email = "test@example.com"
-    monkeypatch.setattr("clinical_trials_mcp.sources.pubmed.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("Medical_Wizard_MCP.sources.pubmed.asyncio.sleep", fake_sleep)
 
     with pytest.raises(RuntimeError, match="PubMed efetch returned invalid XML"):
         await source.search_publications("mrna vaccine")

@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import xml.etree.ElementTree as ET
 from typing import Any
 
 import httpx
 
-from clinical_trials_mcp.models import Publication
-from clinical_trials_mcp.sources.base import BaseSource
+from ..models import Publication
+from .base import BaseSource
 
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SOURCE_NAME = "pubmed"
 RATE_LIMIT_DELAY = 0.4
-
-logger = logging.getLogger(__name__)
 
 MONTH_LOOKUP = {
     "jan": "01",

@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from clinical_trials_mcp.models import Publication, TrialDetail, TrialSummary, TrialTimeline
-from clinical_trials_mcp.sources.base import BaseSource
+from ..models import Publication, TrialDetail, TrialSummary, TrialTimeline
+from .base import BaseSource
 
 logger = logging.getLogger(__name__)
 

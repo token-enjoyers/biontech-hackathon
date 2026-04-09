@@ -22,7 +22,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/clinical_trials_mcp"]
+packages = ["src/Medical_Wizard_MCP"]
 
 [tool.ruff]
 line-length = 100
