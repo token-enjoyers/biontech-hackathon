@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import logging
+import os
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -10,17 +10,35 @@ from typing import Any
 from ._evidence_refs import document_refs_from_nested_data
 from ._tool_catalog import OUTPUT_KIND_NOTES, get_tool_metadata
 
+try:
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.sdk.resources import Resource
 
-conversation_id_var: ContextVar[str | None] = ContextVar("conversation_id", default=None)
-request_start_var: ContextVar[float] = ContextVar("request_start", default=0.0)
+    _OTEL_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://34.51.251.60:4318")
+    _resource = Resource.create({"service.name": "medical-wizard-mcp"})
+    _logger_provider = LoggerProvider(resource=_resource)
+    _logger_provider.add_log_record_processor(
+        BatchLogRecordProcessor(OTLPLogExporter(endpoint=f"{_OTEL_ENDPOINT}/v1/logs"))
+    )
+    set_logger_provider(_logger_provider)
+    _otel_available = True
+except Exception:
+    _otel_available = False
 
+# Fallback: immer auch auf Konsole printen
 _audit_logger = logging.getLogger("gxp.audit")
 if not _audit_logger.handlers:
     _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _handler.setFormatter(logging.Formatter("[GXP AUDIT] %(message)s"))
     _audit_logger.addHandler(_handler)
     _audit_logger.setLevel(logging.INFO)
     _audit_logger.propagate = False
+
+conversation_id_var: ContextVar[str | None] = ContextVar("conversation_id", default=None)
+request_start_var: ContextVar[float] = ContextVar("request_start", default=0.0)
 
 
 def _write_audit_log(
@@ -31,6 +49,7 @@ def _write_audit_log(
     result_count: int,
     warnings: list[dict[str, str]] | None,
 ) -> None:
+    import json
     start = request_start_var.get()
     duration_ms = int((time.perf_counter() - start) * 1000) if start else None
     entry = {
@@ -44,7 +63,39 @@ def _write_audit_log(
         "status": "partial" if warnings else "success",
         "duration_ms": duration_ms,
     }
-    _audit_logger.info(json.dumps(entry, ensure_ascii=False))
+    serialized = json.dumps(entry, ensure_ascii=False)
+
+    # Konsole
+    _audit_logger.info(serialized)
+
+    # SigNoz via OpenTelemetry
+    if _otel_available:
+        try:
+            from opentelemetry._logs import get_logger
+            from opentelemetry.sdk._logs import LogRecord
+            from opentelemetry.trace import INVALID_SPAN_CONTEXT
+            import time as _time
+            otel_logger = get_logger("gxp.audit")
+            record = LogRecord(
+                timestamp=int(_time.time_ns()),
+                observed_timestamp=int(_time.time_ns()),
+                trace_id=INVALID_SPAN_CONTEXT.trace_id,
+                span_id=INVALID_SPAN_CONTEXT.span_id,
+                trace_flags=INVALID_SPAN_CONTEXT.trace_flags,
+                severity_text="INFO",
+                severity_number=9,
+                body=serialized,
+                resource=_resource,
+                attributes={
+                    "tool": tool_name,
+                    "conversation_id": conversation_id_var.get() or "",
+                    "result_count": result_count,
+                    "status": entry["status"],
+                },
+            )
+            otel_logger.emit(record)
+        except Exception:
+            pass
 
 
 def _unique_sources(items: list[dict[str, Any]]) -> list[str]:
