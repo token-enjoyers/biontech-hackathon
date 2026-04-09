@@ -5,643 +5,573 @@
 2. [Architecture](#architecture)
 3. [Setup](#setup)
 4. [Data Sources & API Overview](#data-sources--api-overview)
-5. [Interface Contract](#interface-contract)
-6. [Data Models](#data-models)
-7. [How to Build a New API Client](#how-to-build-a-new-api-client)
-8. [Error Handling](#error-handling)
-9. [MCP Tool Structure](#mcp-tool-structure)
-10. [Data Quality & Source Metadata](#data-quality--source-metadata)
+5. [The `BaseSource` Contract](#the-basesource-contract)
+6. [The `SourceRegistry`](#the-sourceregistry)
+7. [Data Models](#data-models)
+8. [How to Add a New Data Source](#how-to-add-a-new-data-source)
+9. [How to Add a New Tool](#how-to-add-a-new-tool)
+10. [Error Handling](#error-handling)
 11. [Testing](#testing)
 
 ---
 
 ## Project Overview
 
-This MCP (Model Context Protocol) server gives Claude real-time access to public clinical trial
-databases. Instead of manually piecing together data from multiple sources, R&D teams can ask
-natural language questions and receive structured, AI-synthesized intelligence.
+This MCP (Model Context Protocol) server gives Claude real-time access to public clinical
+trial databases. Instead of manually piecing together data from multiple sources, R&D teams
+can ask natural language questions and receive structured, AI-synthesized intelligence.
 
 **Core principle: LLM-First.**
 The MCP tools return clean, structured data. Claude performs all analysis, synthesis, and
-interpretation. No analytics logic lives in the MCP code.
+interpretation. No analytics logic lives in the server.
+
+```
+User question
+   │
+   ▼
+LLM picks tools
+   │
+   ▼
+MCP tool (tools/*.py)
+   │
+   ▼
+SourceRegistry  ── fans out in parallel ──▶  [Source A, Source B, ...]
+   │                                              │
+   ▼                                              ▼
+merged list of Pydantic models          each source hits its own API
+   │
+   ▼
+LLM synthesises answer with citations
+```
+
+The server runs over **streamable HTTP** and integrates with LibreChat at BioNTech.
 
 ---
 
 ## Architecture
 
 ```
-LibreChat (BioNTech)
-        │
-        │  MCP Protocol (stdio)
-        ▼
-   MCP Server (server.py)
-        │  registers all tools
-        ▼
-   tools/           ← what Claude calls
-   ├── trials.py
-   ├── timelines.py
-   ├── publications.py
-   └── design.py    (Stufe 4)
-        │
-        ▼
-   clients/         ← raw API communication only
-   ├── clinicaltrials.py
-   ├── pubmed.py
-   ├── openfda.py
-   └── who_ictrp.py
-        │
-        ▼
-   External APIs    ← we do not build these
-   ├── ClinicalTrials.gov
-   ├── PubMed E-utils
-   ├── OpenFDA
-   └── WHO ICTRP
+src/clinical_trials_mcp/
+├── __main__.py              # Entry point — registers sources, starts server
+├── server.py                # Shared FastMCP instance (all tools register here)
+│
+├── models/                  # Pydantic data models
+│   └── trials.py            # TrialSummary, TrialDetail, TrialTimeline, Publication
+│
+├── sources/                 # Data source abstraction layer
+│   ├── base.py              # BaseSource ABC — default no-op methods
+│   ├── registry.py          # SourceRegistry — fans out to sources, merges results
+│   ├── clinicaltrials.py    # ClinicalTrials.gov API v2
+│   └── pubmed.py            # PubMed E-utilities
+│
+└── tools/                   # MCP tool definitions (thin wrappers calling registry)
+    ├── __init__.py          # Imports all tool modules → triggers registration
+    ├── search.py            # search_trials, get_trial_details
+    ├── timelines.py         # get_trial_timelines
+    └── publications.py      # search_publications
 ```
 
 ### The Three-Layer Rule
 
 | Layer | Responsibility | What does NOT belong here |
 |-------|---------------|--------------------------|
-| `clients/` | Raw HTTP requests, parsing, normalization | Business logic, filtering |
-| `tools/` | MCP tool definitions, calling clients, returning structured output | HTTP requests, parsing |
-| `server.py` | Registering tools with FastMCP | Any logic whatsoever |
+| `sources/` | Raw HTTP requests, parsing, normalization to Pydantic models | Business logic, cross-source merging |
+| `tools/` | MCP tool definitions; thin wrappers around `registry` | HTTP requests, parsing, source-specific logic |
+| `server.py` / `__main__.py` | FastMCP instance, source registration, transport setup | Any business logic |
+
+**Key invariants:**
+- Tools never know which sources exist. They call `registry.<method>()` and get a merged result.
+- Sources never know about tools. They implement `BaseSource` and answer questions about their own API.
+- Adding a new source = implement `BaseSource` + one line in `__main__.py`. Zero tool changes.
 
 ---
 
 ## Setup
 
 ### Requirements
-```bash
-python >= 3.11
-pip install fastmcp httpx pydantic
-```
+- Python ≥ 3.11
+- [uv](https://github.com/astral-sh/uv) (recommended) or pip
 
 ### Installation
 ```bash
 git clone <repo-url>
-cd clinical-trial-mcp
-pip install -r requirements.txt
-python server.py
+cd biontech-hackathon
+uv pip install -e ".[dev]"
+```
+
+### Running
+```bash
+python -m clinical_trials_mcp
+# Server endpoint: http://localhost:8000/mcp
 ```
 
 ### LibreChat Configuration (`librechat.yaml`)
 ```yaml
 mcpServers:
   clinical-trial-intelligence:
-    command: python
-    args:
-      - server.py
-    type: stdio
+    type: streamable-http
+    url: http://localhost:8000/mcp
+```
+
+### Environment Variables (optional, loaded from `.env`)
+```
+PUBMED_API_KEY=    # Higher PubMed rate limit (10 req/sec vs 3)
+PUBMED_EMAIL=      # Required by PubMed API policy
+```
+
+### Development Commands
+```bash
+ruff check src/      # Lint
+ruff format src/     # Format
+pytest               # Test
 ```
 
 ---
 
 ## Data Sources & API Overview
 
-| API | What it contains | Auth | Rate Limit | Format |
-|-----|-----------------|------|-----------|--------|
-| ClinicalTrials.gov v2 | All registered trials worldwide | None | 10 req/s | JSON |
-| PubMed E-utils | Peer-reviewed publications | None (optional key) | 3 req/s | JSON + XML |
-| OpenFDA | Approved drugs & adverse events | None | 240 req/min | JSON |
-| WHO ICTRP | International trials (EU, China) | None | Best effort | JSON |
+| Source | API | Auth | Rate Limit | Status |
+|-----|-----|------|-----------|--------|
+| ClinicalTrials.gov v2 | `https://clinicaltrials.gov/api/v2` | None | 10 req/s | implemented (stub) |
+| PubMed E-utils | `https://eutils.ncbi.nlm.nih.gov/entrez/eutils` | Optional API key | 3 req/s (10 with key) | implemented (stub) |
+
+> Both sources are currently scaffolded as `BaseSource` subclasses with `NotImplementedError`
+> bodies. The next implementation step is filling in the API calls and response normalization.
 
 ### ClinicalTrials.gov
 ```
-Base URL: https://clinicaltrials.gov/api/v2
-GET /studies               → search with filters
-GET /studies/{nctId}       → single trial by NCT ID
+GET /studies              → search with filters
+GET /studies/{nctId}      → single trial by NCT ID
 ```
 
 ### PubMed E-utils (2-step process)
 ```
-Base URL: https://eutils.ncbi.nlm.nih.gov/entrez/eutils
-Step 1: GET /esearch.fcgi  → returns list of PMIDs
-Step 2: GET /efetch.fcgi   → returns full data for those PMIDs
+GET /esearch.fcgi         → returns list of PMIDs
+GET /efetch.fcgi          → returns full data for those PMIDs
 ```
 
-### OpenFDA
-```
-Base URL: https://api.fda.gov/drug
-GET /drugsfda.json         → approved drug applications
-```
+### Future candidates (not yet built)
+- **OpenFDA** — approved drugs & adverse events
+- **WHO ICTRP** — international trial registry (EU, China, Japan)
 
-### WHO ICTRP
-```
-Base URL: https://trialsearch.who.int/API
-GET /trials                → international trial registry
-```
+Each would slot in as another `BaseSource` subclass without any tool changes.
 
 ---
 
-## Interface Contract
+## The `BaseSource` Contract
 
-Every client MUST conform to the `DataSourceProtocol`.
-We use Python `Protocol` for structural typing – no inheritance required.
-If your client has these method signatures, it conforms automatically.
+Every data source subclasses `BaseSource` (`sources/base.py`). It is an ABC with two
+abstract methods (lifecycle) and four concrete default no-op methods (capabilities).
 
 ```python
-# clients/base.py
+# sources/base.py
 
-from typing import Protocol, runtime_checkable
+class BaseSource(ABC):
+    name: str  # short identifier, e.g. "clinicaltrials_gov", "pubmed"
 
-@runtime_checkable
-class DataSourceProtocol(Protocol):
+    # ── Lifecycle (must implement) ──────────────────────────────────────────
+    @abstractmethod
+    async def initialize(self) -> None:
+        """Set up HTTP client and validate connectivity."""
 
-    async def search(
+    @abstractmethod
+    async def close(self) -> None:
+        """Clean up resources (e.g. close HTTP client)."""
+
+    # ── Capabilities (override only what you support) ───────────────────────
+    async def search_trials(
+        self,
+        condition: str,
+        phase: str | None = None,
+        status: str | None = None,
+        sponsor: str | None = None,
+        intervention: str | None = None,
+        max_results: int = 10,
+    ) -> list[TrialSummary]:
+        return []
+
+    async def get_trial_details(self, nct_id: str) -> TrialDetail | None:
+        return None
+
+    async def get_trial_timelines(
+        self,
+        condition: str,
+        sponsor: str | None = None,
+        max_results: int = 15,
+    ) -> list[TrialTimeline]:
+        return []
+
+    async def search_publications(
         self,
         query: str,
-        **kwargs
-    ) -> list[dict]:
-        """
-        Search the data source with a primary query string.
-        Additional source-specific filters passed as kwargs.
-        Always returns a list of raw dicts before Pydantic validation.
-        Returns empty list [] if nothing found – never raises on empty.
-        """
-        ...
-
-    async def fetch_by_id(
-        self,
-        id: str
-    ) -> dict:
-        """
-        Fetch a single record by its source-specific ID.
-        NCT ID for ClinicalTrials.gov, PMID for PubMed, etc.
-        Raises DataSourceError if not found.
-        """
-        ...
-
-    async def get_metadata(self) -> dict:
-        """
-        Returns static metadata about this data source.
-        Used to populate _meta in every tool response.
-        See: Data Quality & Source Metadata section.
-        """
-        ...
+        max_results: int = 10,
+    ) -> list[Publication]:
+        return []
 ```
 
-### What kwargs are allowed per client
+### Why default no-ops instead of `NotImplementedError`?
 
-Each client decides its own kwargs inside `search()`.
-Document them clearly in your client file. Example:
+Because the registry fans out **every** capability to **every** source. A PubMed source
+should silently return `[]` for `search_trials()`, not crash the request. Sources only
+override the methods they actually support.
+
+---
+
+## The `SourceRegistry`
+
+`sources/registry.py` is the central fan-out point. Tools never talk to sources directly —
+they call `registry.<method>()` and get a merged result.
 
 ```python
-# ClinicalTrials client
-await ct_client.search(
-    query="lung cancer",
-    phase="PHASE3",          # CT.gov specific
-    status="RECRUITING",     # CT.gov specific
-    sponsor="BioNTech",      # CT.gov specific
-    max_results=20
-)
+# Simplified
+class SourceRegistry:
+    def __init__(self) -> None:
+        self._sources: list[BaseSource] = []
+        self._initialized = False
 
-# PubMed client
-await pubmed_client.search(
-    query="mRNA vaccine lung cancer",
-    year_from=2022,           # PubMed specific
-    max_results=20
-)
+    def register(self, source: BaseSource) -> None:
+        self._sources.append(source)
+
+    async def initialize_all(self) -> None:
+        # Lazy: runs once on first request
+        ...
+
+    async def search_trials(self, ...) -> list[TrialSummary]:
+        await self.initialize_all()
+        tasks = [s.search_trials(...) for s in self._sources]
+        results = []
+        for coro in asyncio.as_completed(tasks):
+            try:
+                results.extend(await coro)
+            except Exception:
+                logger.exception("Source failed during search_trials")
+        return results[:max_results]
 ```
+
+**Key behaviors:**
+- **Parallel fan-out** via `asyncio.as_completed` — slow sources don't block fast ones.
+- **Per-source error isolation** — one source crashing never breaks the whole tool call.
+- **Lazy init** — `initialize_all()` runs the first time any tool is called.
+- **Singleton** — `registry` is imported as a global from `sources/registry.py`.
+
+For single-record lookups (`get_trial_details`), the registry queries sources in
+registration order and returns the first non-`None` hit.
 
 ---
 
 ## Data Models
 
-All clients return data that gets validated against these Pydantic models.
-Defined in `models/schemas.py`. Do not create your own models in client files.
+All models live in `models/trials.py`. Sources return these directly — never raw dicts.
 
 ```python
-# models/schemas.py
+class TrialSummary(BaseModel):
+    source: str                            # "clinicaltrials_gov", "who_ictrp", ...
+    nct_id: str
+    brief_title: str
+    phase: str | None = None
+    overall_status: str
+    lead_sponsor: str
+    interventions: list[str] = []
+    primary_outcomes: list[str] = []
+    enrollment_count: int | None = None
 
-from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
 
-class Trial(BaseModel):
-    # --- Always present ---
-    id: str                              # NCT ID, WHO ID, etc.
-    title: str
-    source: str                          # "clinicaltrials" | "who_ictrp"
+class TrialDetail(TrialSummary):
+    official_title: str | None = None
+    eligibility_criteria: str | None = None
+    arms: list[str] = []
+    secondary_outcomes: list[str] = []
+    study_type: str | None = None
+    conditions: list[str] = []
 
-    # --- Usually present ---
-    status: Optional[str] = None         # RECRUITING, COMPLETED, TERMINATED, ...
-    phase: Optional[str] = None          # PHASE1, PHASE2, PHASE3, PHASE4
-    sponsor: Optional[str] = None
-    condition: Optional[str] = None      # e.g. "Non-Small Cell Lung Cancer"
-    intervention: Optional[str] = None   # e.g. "mRNA Vaccine + PD-1 Inhibitor"
-    start_date: Optional[str] = None
-    completion_date: Optional[str] = None
-    enrollment: Optional[int] = None     # planned patient count
 
-    # --- Sometimes present ---
-    primary_endpoint: Optional[str] = None
-    biomarkers: Optional[list[str]] = None
-    why_stopped: Optional[str] = None    # only for TERMINATED trials – CT.gov only
-    country: Optional[str] = None        # WHO ICTRP only
+class TrialTimeline(BaseModel):
+    source: str
+    nct_id: str
+    brief_title: str
+    phase: str | None = None
+    lead_sponsor: str
+    start_date: str | None = None
+    primary_completion_date: str | None = None
+    completion_date: str | None = None
+    enrollment_count: int | None = None
 
 
 class Publication(BaseModel):
-    # --- Always present ---
+    source: str
     pmid: str
     title: str
-    source: str                          # "pubmed"
-
-    # --- Usually present ---
-    abstract: Optional[str] = None
-    journal: Optional[str] = None
-    year: Optional[str] = None
     authors: list[str] = []
-
-    # --- Sometimes present ---
-    doi: Optional[str] = None
-    mesh_terms: Optional[list[str]] = None   # structured MeSH keywords from PubMed
-
-
-class ApprovedDrug(BaseModel):
-    # --- Always present ---
-    brand_name: str
-    generic_name: str
-    source: str                          # "openfda"
-
-    # --- Usually present ---
-    indication: Optional[str] = None
-    approval_date: Optional[str] = None
-    sponsor: Optional[str] = None
-    application_number: Optional[str] = None
+    journal: str
+    pub_date: str
+    abstract: str = ""
 ```
 
 ### The `source` field is mandatory
 
-Every model has a `source` field. This tells Claude exactly where the data came from
-so it can reason about data quality, coverage gaps, and confidence levels.
+Every model carries a `source` field so Claude can cite where each piece of evidence came
+from and reason about coverage gaps ("I only checked ClinicalTrials.gov, Chinese trials may
+be missing"). Always set it explicitly in your source class:
 
 ```python
-# Always set this explicitly in your client
-trial = Trial(
-    id="NCT04179552",
-    title="...",
-    source="clinicaltrials",   # ← never omit this
+TrialSummary(
+    source=self.name,   # never hardcode — use the class attribute
+    nct_id="NCT04179552",
+    brief_title="...",
     ...
 )
 ```
 
+### Field naming convention
+
+Field names mirror ClinicalTrials.gov v2 terminology (`nct_id`, `brief_title`,
+`overall_status`, `lead_sponsor`) because it is the dominant source. New sources should
+**map their fields onto this schema**, not introduce parallel naming.
+
 ---
 
-## How to Build a New API Client
+## How to Add a New Data Source
 
-Follow this structure exactly. Every client file looks the same from the outside.
+Follow this recipe. The whole change should be one new file plus one line in `__main__.py`.
 
-### File structure
+### 1. Create `sources/your_source.py`
 
 ```python
-# clients/your_source.py
+from __future__ import annotations
 
 import httpx
-import asyncio
-from typing import Optional
-from models.schemas import Trial  # or Publication, ApprovedDrug
-from clients.base import DataSourceError
 
-# ── Constants ────────────────────────────────────────────────────────────────
+from clinical_trials_mcp.models import TrialSummary
+from clinical_trials_mcp.sources.base import BaseSource
 
 BASE_URL = "https://your-api.example.com"
-SOURCE_NAME = "your_source"          # used in all model.source fields
-RATE_LIMIT_DELAY = 0.4               # seconds between requests
-
-# ── Protocol implementation ───────────────────────────────────────────────────
-
-async def search(query: str, **kwargs) -> list[dict]:
-    """
-    Search your_source for records matching query.
-
-    kwargs:
-        max_results (int): Maximum records to return. Default: 20.
-        year_from (int): Filter results from this year onwards. Optional.
-        [add your source-specific params here]
-    """
-    max_results = kwargs.get("max_results", 20)
-
-    params = _build_params(query, max_results, **kwargs)
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(f"{BASE_URL}/endpoint", params=params)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise DataSourceError(
-                source=SOURCE_NAME,
-                message=f"Search failed: {e.response.status_code}",
-                status_code=e.response.status_code
-            )
-
-    raw = response.json()
-    return _normalize(raw)
 
 
-async def fetch_by_id(id: str) -> dict:
-    """
-    Fetch a single record by ID from your_source.
-    Raises DataSourceError if not found.
-    """
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(f"{BASE_URL}/endpoint/{id}")
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise DataSourceError(
-                source=SOURCE_NAME,
-                message=f"Record {id} not found",
-                status_code=e.response.status_code
-            )
+class YourSource(BaseSource):
+    """One-line description of what this source provides."""
 
-    return _normalize_single(response.json())
+    name = "your_source"
 
+    async def initialize(self) -> None:
+        self._client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
 
-async def get_metadata() -> dict:
-    """
-    Static metadata about this source.
-    Returned in every tool response under _meta.
-    """
-    return {
-        "source": SOURCE_NAME,
-        "base_url": BASE_URL,
-        "data_type": "trial_registry",    # or "publication", "drug_approval"
-        "quality_note": "Describe what this source covers and what it misses.",
-        "coverage": "Describe geographic or temporal coverage.",
-        "update_frequency": "Daily / Weekly / Real-time",
-        "auth_required": False
-    }
+    async def close(self) -> None:
+        await self._client.aclose()
 
-# ── Private helpers ───────────────────────────────────────────────────────────
+    async def search_trials(
+        self,
+        condition: str,
+        phase: str | None = None,
+        status: str | None = None,
+        sponsor: str | None = None,
+        intervention: str | None = None,
+        max_results: int = 10,
+    ) -> list[TrialSummary]:
+        params = self._build_params(condition, phase, status, sponsor, max_results)
+        response = await self._client.get("/endpoint", params=params)
+        response.raise_for_status()
+        return self._normalize(response.json())
 
-def _build_params(query: str, max_results: int, **kwargs) -> dict:
-    """Build the query parameter dict for this API."""
-    params = {
-        "query": query,
-        "pageSize": max_results,
-    }
-    # add source-specific params from kwargs here
-    return params
+    # Override only the capabilities your API supports.
+    # Everything else inherits the no-op default from BaseSource.
 
+    # ── Private helpers ─────────────────────────────────────────────────────
+    def _build_params(self, condition, phase, status, sponsor, max_results) -> dict:
+        ...
 
-def _normalize(raw: dict) -> list[dict]:
-    """
-    Transform raw API response into list of normalized dicts.
-    Must match Trial or Publication schema fields.
-    Never raises – log and skip malformed records.
-    """
-    results = []
-    for item in raw.get("studies", []):
-        try:
-            results.append(_normalize_single(item))
-        except Exception:
-            continue    # skip malformed records silently
-    return results
-
-
-def _normalize_single(item: dict) -> dict:
-    """Transform one raw API record into a normalized dict."""
-    return {
-        "id": item.get("your_id_field"),
-        "title": item.get("your_title_field"),
-        "source": SOURCE_NAME,
-        # map remaining fields to schema fields
-        # use None for fields this API does not provide
-    }
+    def _normalize(self, raw: dict) -> list[TrialSummary]:
+        results = []
+        for item in raw.get("studies", []):
+            try:
+                results.append(TrialSummary(
+                    source=self.name,
+                    nct_id=item["id"],
+                    brief_title=item["title"],
+                    overall_status=item.get("status", "UNKNOWN"),
+                    lead_sponsor=item.get("sponsor", ""),
+                    # map remaining fields; leave Optional fields as None if absent
+                ))
+            except Exception:
+                continue   # skip malformed records silently
+        return results
 ```
 
-### Checklist before submitting your client
+### 2. Register in `__main__.py`
 
-- [ ] `search()` returns `list[dict]` matching the schema
-- [ ] `fetch_by_id()` raises `DataSourceError` if not found
-- [ ] `get_metadata()` returns complete metadata dict
-- [ ] `source` field is set to your `SOURCE_NAME` constant on every record
-- [ ] Fields this API does not provide are explicitly set to `None`
-- [ ] `DataSourceError` is raised (not raw exceptions) on HTTP failures
-- [ ] Rate limit delay is respected (`asyncio.sleep(RATE_LIMIT_DELAY)`)
-- [ ] Tested in isolation with the test pattern below
+```python
+from clinical_trials_mcp.sources.your_source import YourSource
+...
+registry.register(YourSource())
+```
+
+### 3. That's it
+
+No tool changes. The next call to `search_trials` will automatically include results from
+your source, merged with whatever the other sources return.
+
+### Checklist
+
+- [ ] Subclasses `BaseSource`
+- [ ] `name` attribute set
+- [ ] `initialize()` and `close()` implemented
+- [ ] Only overrides capabilities the API actually supports
+- [ ] Returns Pydantic models (not raw dicts)
+- [ ] Sets `source=self.name` on every model
+- [ ] Fields the API does not provide are explicitly `None`
+- [ ] Malformed records are skipped, not raised
+- [ ] Registered in `__main__.py`
+
+---
+
+## How to Add a New Tool
+
+Tools are thin wrappers around the registry. They handle parameter validation and
+docstring-based prompting; everything else goes through the registry.
+
+### 1. Add a new method to `BaseSource` (with a no-op default)
+
+```python
+# sources/base.py
+async def search_adverse_events(
+    self,
+    drug: str,
+    max_results: int = 10,
+) -> list[AdverseEvent]:
+    return []
+```
+
+### 2. Add a fan-out method to `SourceRegistry`
+
+```python
+# sources/registry.py
+async def search_adverse_events(self, drug: str, max_results: int = 10) -> list[AdverseEvent]:
+    await self.initialize_all()
+    tasks = [s.search_adverse_events(drug=drug, max_results=max_results) for s in self._sources]
+    results: list[AdverseEvent] = []
+    for coro in asyncio.as_completed(tasks):
+        try:
+            results.extend(await coro)
+        except Exception:
+            logger.exception("Source failed during search_adverse_events")
+    return results[:max_results]
+```
+
+### 3. Create the tool file
+
+```python
+# tools/adverse_events.py
+from clinical_trials_mcp.server import mcp
+from clinical_trials_mcp.sources import registry
+
+
+@mcp.tool()
+async def search_adverse_events(drug: str, max_results: int = 10) -> list[dict]:
+    """Search for reported adverse events for a given drug.
+
+    Use this when the user asks about side effects, safety signals, or post-market
+    surveillance data for an approved drug.
+
+    Returns for each event: drug, reaction, severity, source.
+
+    Args:
+        drug: Generic or brand name (e.g. "pembrolizumab", "Keytruda")
+        max_results: Number of results (default 10, max 20)
+    """
+    max_results = min(max_results, 20)
+    results = await registry.search_adverse_events(drug=drug, max_results=max_results)
+    return [r.model_dump() for r in results]
+```
+
+### 4. Register the tool module
+
+```python
+# tools/__init__.py
+from . import adverse_events, publications, search, timelines  # noqa: F401
+```
+
+### Tool docstring conventions
+
+The docstring is what Claude reads to decide when to call the tool. Follow this pattern:
+
+1. **One-line summary** of what the tool does.
+2. **When to use it** — concrete trigger phrases the user might say.
+3. **What it returns** — flat list of fields, no marketing fluff.
+4. **`Args:` block** with clinical context for each parameter (valid values, examples).
 
 ---
 
 ## Error Handling
 
-One central exception type. Every client raises this, nothing else.
+The registry catches exceptions per source and logs them; one failing source never breaks
+a tool call. Tools themselves currently let exceptions propagate to FastMCP, which
+serializes them into MCP protocol errors.
 
 ```python
-# clients/base.py
-
-class DataSourceError(Exception):
-    """
-    Raised by any client when an API call fails.
-    Tools catch this and return a structured error to Claude
-    so Claude can reason about what went wrong.
-    """
-    def __init__(
-        self,
-        source: str,
-        message: str,
-        status_code: Optional[int] = None
-    ):
-        self.source = source
-        self.message = message
-        self.status_code = status_code
-        super().__init__(f"[{source}] {message}")
-```
-
-### How tools handle DataSourceError
-
-```python
-# tools/trials.py
-
-@mcp.tool()
-async def search_trials(condition: str, phase: str = None) -> dict:
+# sources/registry.py — already implemented
+for coro in asyncio.as_completed(tasks):
     try:
-        raw = await clinicaltrials.search(condition, phase=phase)
-        trials = [Trial(**r) for r in raw]
-        return _wrap_response(trials, await clinicaltrials.get_metadata())
-    except DataSourceError as e:
-        return {
-            "error": True,
-            "source": e.source,
-            "message": e.message,
-            "status_code": e.status_code,
-            "results": []
-        }
+        results.extend(await coro)
+    except Exception:
+        logger.exception("Source failed during search_trials")
 ```
 
-Claude receives the error dict and can tell the user what went wrong
-instead of silently failing.
+**Inside a source** — let `httpx` raise. The registry will catch it. Don't wrap every call
+in try/except for its own sake; only catch where you can do something meaningful (e.g.
+skipping a malformed record in `_normalize`).
 
----
-
-## MCP Tool Structure
-
-Every tool returns the same envelope. This is how Claude always knows
-what source the data came from and how to weigh it.
-
-```python
-def _wrap_response(results: list, metadata: dict) -> dict:
-    return {
-        "_meta": metadata,      # from client.get_metadata()
-        "count": len(results),
-        "results": [r.model_dump() for r in results]
-    }
-```
-
-### Tool description template
-
-The docstring of every `@mcp.tool()` function is what Claude reads to decide
-when to call it. Follow this pattern:
-
-```python
-@mcp.tool()
-async def search_trials(
-    condition: str,
-    phase: Optional[str] = None,
-    status: Optional[str] = None,
-    sponsor: Optional[str] = None,
-    max_results: int = 20
-) -> dict:
-    """
-    [ONE LINE: what this tool does]
-    Search ClinicalTrials.gov for clinical trials matching the given condition.
-
-    [WHEN TO USE: exact trigger phrases Claude should recognize]
-    Use this tool when the user asks about:
-    - Active or recruiting trials for a specific cancer type
-    - What competitors are running in a given indication
-    - How many trials exist for a condition and phase
-
-    [PARAMETERS: what each one means clinically]
-    Args:
-        condition: Cancer type or disease (e.g. "lung cancer", "NSCLC", "glioblastoma")
-        phase: Trial phase – PHASE1, PHASE2, PHASE3, PHASE4. Optional.
-        status: Trial status – RECRUITING, COMPLETED, TERMINATED. Optional.
-        sponsor: Company or institution name. Optional.
-        max_results: Number of results to return. Default 20.
-
-    [OUTPUT: what Claude gets back]
-    Returns a list of trials with id, title, sponsor, phase, status, and dates.
-    Does NOT return full trial details – use get_trial_details() for that.
-    """
-```
-
----
-
-## Data Quality & Source Metadata
-
-This is how Claude understands the limitations of each data source.
-Every `get_metadata()` must return these fields:
-
-```python
-# Example: ClinicalTrials.gov
-{
-    "source": "clinicaltrials",
-    "data_type": "trial_registry",
-    "quality_note": (
-        "Sponsor-reported data. Results section only populated for completed "
-        "trials that chose to report outcomes. Data is updated daily."
-    ),
-    "coverage": (
-        "US-focused registry. International trials may be missing. "
-        "Strongest for Phase 2+ industry-sponsored trials."
-    ),
-    "update_frequency": "Daily",
-    "auth_required": False
-}
-
-# Example: PubMed
-{
-    "source": "pubmed",
-    "data_type": "published_research",
-    "quality_note": (
-        "Peer-reviewed publications only. Significant publication bias: "
-        "negative results are underrepresented. Full text not available via API. "
-        "Expect 6-18 month lag after trial completion before results appear."
-    ),
-    "coverage": (
-        "Covers most major medical journals. Preprints excluded. "
-        "International coverage is strong but abstracts may be English-only."
-    ),
-    "update_frequency": "Daily",
-    "auth_required": False
-}
-
-# Example: WHO ICTRP
-{
-    "source": "who_ictrp",
-    "data_type": "trial_registry",
-    "quality_note": (
-        "Aggregates registries from EU, China, Japan and others. "
-        "Data quality varies by contributing registry. "
-        "Less structured than ClinicalTrials.gov."
-    ),
-    "coverage": (
-        "Essential for non-US trials. Chinese trials (ChiCTR) largely invisible "
-        "on ClinicalTrials.gov but present here."
-    ),
-    "update_frequency": "Weekly",
-    "auth_required": False
-}
-```
-
-### Why this matters for Claude
-
-With `_meta` attached to every response, Claude can say:
-
-> "I found 3 trials on ClinicalTrials.gov, but this registry is US-focused.
->  Let me also check WHO ICTRP for Chinese and European competitors."
-
-Without `_meta`, Claude has no basis to reason about coverage gaps.
+**For "not found" results** — return `None` (single-record methods) or `[]` (list methods).
+Do not raise.
 
 ---
 
 ## Testing
 
-### Test each client in isolation
+### Test a source in isolation
 
 ```python
-# Run from repo root
 import asyncio
-from clients.pubmed import search, fetch_by_id
+from clinical_trials_mcp.sources.clinicaltrials import ClinicalTrialsSource
 
-async def test_pubmed():
-    # Test search
-    pmids = await search("mRNA vaccine lung cancer", max_results=3)
-    assert isinstance(pmids, list)
-    assert len(pmids) <= 3
-    print(f"Search OK: {len(pmids)} results")
 
-    # Test fetch
-    if pmids:
-        paper = await fetch_by_id(pmids[0])
-        assert paper.get("source") == "pubmed"
-        assert paper.get("title") is not None
-        print(f"Fetch OK: {paper['title'][:60]}...")
+async def test_clinicaltrials():
+    source = ClinicalTrialsSource()
+    await source.initialize()
+    try:
+        results = await source.search_trials(condition="lung cancer", max_results=3)
+        assert len(results) <= 3
+        assert all(r.source == "clinicaltrials_gov" for r in results)
+        print(f"OK: {len(results)} results")
+    finally:
+        await source.close()
 
-asyncio.run(test_pubmed())
+
+asyncio.run(test_clinicaltrials())
 ```
 
-### Test the full tool response envelope
+### Test a tool end-to-end (via the registry)
 
 ```python
-from tools.publications import search_publications
+import asyncio
+from clinical_trials_mcp.sources import registry
+from clinical_trials_mcp.sources.clinicaltrials import ClinicalTrialsSource
+from clinical_trials_mcp.tools.search import search_trials
 
-async def test_tool():
-    result = await search_publications(term="mRNA vaccine lung cancer")
-    assert "_meta" in result
-    assert "results" in result
-    assert "count" in result
-    assert result["_meta"]["source"] == "pubmed"
-    print(f"Tool OK: {result['count']} results from {result['_meta']['source']}")
 
-asyncio.run(test_tool())
+async def test_search_trials():
+    registry.register(ClinicalTrialsSource())
+    result = await search_trials(condition="NSCLC", phase="PHASE3", max_results=5)
+    assert isinstance(result, list)
+    assert all("nct_id" in r and "source" in r for r in result)
+    print(f"OK: {len(result)} trials")
+
+
+asyncio.run(test_search_trials())
 ```
 
 ### Before you open a PR
 
-1. Run your client test in isolation
-2. Run the tool test end-to-end
-3. Confirm `source` field is set on every result
-4. Confirm `DataSourceError` is raised on HTTP errors (test with wrong URL)
-5. Confirm `get_metadata()` returns all required fields
+1. Run the source test in isolation against the real API.
+2. Run the tool test end-to-end through the registry.
+3. Confirm `source` is set on every returned model.
+4. Confirm the source returns `[]` / `None` for capabilities it does not support.
+5. Confirm `ruff check src/` passes.
