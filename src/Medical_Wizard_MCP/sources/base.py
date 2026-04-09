@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from clinical_trials_mcp.models import Publication, TrialDetail, TrialSummary, TrialTimeline
+from ..models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
 
 
 class BaseSource(ABC):
@@ -13,6 +13,7 @@ class BaseSource(ABC):
     """
 
     name: str
+    capabilities: frozenset[str] = frozenset()
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -23,6 +24,9 @@ class BaseSource(ABC):
     async def close(self) -> None:
         """Clean up resources (e.g. close HTTP client)."""
         ...
+
+    def supports(self, capability: str) -> bool:
+        return capability in self.capabilities
 
     async def search_trials(
         self,
@@ -42,6 +46,8 @@ class BaseSource(ABC):
         self,
         condition: str,
         sponsor: str | None = None,
+        phase: str | None = None,
+        status: str | None = None,
         max_results: int = 15,
     ) -> list[TrialTimeline]:
         return []
@@ -52,4 +58,21 @@ class BaseSource(ABC):
         max_results: int = 10,
         year_from: int | None = None,
     ) -> list[Publication]:
+        return []
+
+    async def search_preprints(
+        self,
+        query: str,
+        max_results: int = 10,
+        year_from: int | None = None,
+    ) -> list[Publication]:
+        return []
+
+    async def search_approved_drugs(
+        self,
+        indication: str,
+        sponsor: str | None = None,
+        intervention: str | None = None,
+        max_results: int = 10,
+    ) -> list[ApprovedDrug]:
         return []

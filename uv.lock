@@ -134,7 +134,7 @@ wheels = [
 ]
 
 [[package]]
-name = "clinical-trials-mcp"
+name = "medical-wizard-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -1,3 +1,3 @@
-from .trials import Publication, TrialDetail, TrialSummary, TrialTimeline
+from .trials import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
 
-__all__ = ["TrialSummary", "TrialDetail", "TrialTimeline", "Publication"]
+__all__ = ["TrialSummary", "TrialDetail", "TrialTimeline", "Publication", "ApprovedDrug"]

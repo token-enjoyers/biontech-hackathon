@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import xml.etree.ElementTree as ET
 from typing import Any
 
 import httpx
 
-from clinical_trials_mcp.models import Publication
-from clinical_trials_mcp.sources.base import BaseSource
+from ..models import Publication
+from .base import BaseSource
 
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SOURCE_NAME = "pubmed"
 RATE_LIMIT_DELAY = 0.4
-
-logger = logging.getLogger(__name__)
 
 MONTH_LOOKUP = {
     "jan": "01",
@@ -38,15 +35,16 @@ class PubMedSource(BaseSource):
     """PubMed E-utilities data source."""
 
     name = SOURCE_NAME
+    capabilities = frozenset({"publication_search"})
 
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
             timeout=30.0,
-            headers={"User-Agent": "clinical-trials-mcp/0.1.0"},
+            headers={"User-Agent": "medical-wizard-mcp/0.1.0"},
         )
         self._api_key = os.getenv("PUBMED_API_KEY")
-        self._email = os.getenv("PUBMED_EMAIL", "clinical-trials-mcp@example.com")
+        self._email = os.getenv("PUBMED_EMAIL", "medical-wizard-mcp@example.com")
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -153,10 +151,12 @@ class PubMedSource(BaseSource):
             "journal": self._extract_journal(article_node),
             "pub_date": self._extract_pub_date(article, article_node),
             "abstract": self._extract_abstract(article_node),
+            "doi": self._extract_doi(article),
+            "mesh_terms": self._extract_mesh_terms(medline),
         }
 
     def _base_params(self) -> dict[str, str]:
-        params = {"tool": "clinical-trials-mcp"}
+        params = {"tool": "medical-wizard-mcp"}
         if self._api_key:
             params["api_key"] = self._api_key
         if self._email:
@@ -211,6 +211,22 @@ class PubMedSource(BaseSource):
             else:
                 parts.append(text)
         return "\n\n".join(parts)
+
+    def _extract_doi(self, article: ET.Element) -> str | None:
+        for node in article.findall(".//PubmedData/ArticleIdList/ArticleId"):
+            if node.attrib.get("IdType") == "doi":
+                doi = self._extract_text(node)
+                if doi:
+                    return doi
+        return None
+
+    def _extract_mesh_terms(self, medline: ET.Element) -> list[str]:
+        terms: list[str] = []
+        for mesh_heading in medline.findall("MeshHeadingList/MeshHeading"):
+            descriptor = self._extract_text(mesh_heading.find("DescriptorName"))
+            if descriptor:
+                terms.append(descriptor)
+        return terms
 
     def _format_structured_date(self, node: ET.Element | None) -> str:
         if node is None:

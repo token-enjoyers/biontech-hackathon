@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from clinical_trials_mcp.sources.pubmed import BASE_URL, PubMedSource
+from Medical_Wizard_MCP.sources.pubmed import BASE_URL, PubMedSource
 
 
 PUBMED_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -11,6 +11,14 @@ PUBMED_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <PubmedArticle>
     <MedlineCitation>
       <PMID>123</PMID>
+      <MeshHeadingList>
+        <MeshHeading>
+          <DescriptorName>Vaccines, mRNA</DescriptorName>
+        </MeshHeading>
+        <MeshHeading>
+          <DescriptorName>Lung Neoplasms</DescriptorName>
+        </MeshHeading>
+      </MeshHeadingList>
       <Article>
         <ArticleTitle>mRNA cancer vaccine study</ArticleTitle>
         <Abstract>
@@ -38,6 +46,11 @@ PUBMED_XML = """<?xml version="1.0" encoding="UTF-8"?>
         </AuthorList>
       </Article>
     </MedlineCitation>
+    <PubmedData>
+      <ArticleIdList>
+        <ArticleId IdType="doi">10.1000/example-doi</ArticleId>
+      </ArticleIdList>
+    </PubmedData>
   </PubmedArticle>
   <PubmedArticle>
     <MedlineCitation>
@@ -104,7 +117,7 @@ async def test_search_publications_two_step_flow(monkeypatch: pytest.MonkeyPatch
     )
     source._api_key = None
     source._email = "test@example.com"
-    monkeypatch.setattr("clinical_trials_mcp.sources.pubmed.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("Medical_Wizard_MCP.sources.pubmed.asyncio.sleep", fake_sleep)
 
     results = await source.search_publications(
         "mrna vaccine",
@@ -115,11 +128,16 @@ async def test_search_publications_two_step_flow(monkeypatch: pytest.MonkeyPatch
     await source.close()
 
     assert sleep_calls == [0.4]
-    assert [call[0] for call in calls] == ["/esearch.fcgi", "/efetch.fcgi"]
+    assert [call[0] for call in calls] == [
+        "/entrez/eutils/esearch.fcgi",
+        "/entrez/eutils/efetch.fcgi",
+    ]
     assert [publication.pmid for publication in results] == ["123", "456"]
     assert results[0].journal == "Nature Medicine"
     assert results[0].pub_date == "2024-09-12"
     assert results[0].authors == ["Alice Smith", "BioNTech Study Group"]
+    assert results[0].doi == "10.1000/example-doi"
+    assert results[0].mesh_terms == ["Vaccines, mRNA", "Lung Neoplasms"]
     assert (
         results[0].abstract
         == "BACKGROUND: Promising early data.\n\nExpanded cohort showed durable response."
@@ -127,6 +145,8 @@ async def test_search_publications_two_step_flow(monkeypatch: pytest.MonkeyPatch
     assert results[1].journal == "J Clin Oncol"
     assert results[1].pub_date == "2023"
     assert results[1].authors == ["BB Jones"]
+    assert results[1].doi is None
+    assert results[1].mesh_terms == []
 
 
 @pytest.mark.asyncio
@@ -150,7 +170,7 @@ async def test_search_publications_returns_empty_list_when_esearch_has_no_result
     await source.close()
 
     assert results == []
-    assert calls == ["/esearch.fcgi"]
+    assert calls == ["/entrez/eutils/esearch.fcgi"]
 
 
 @pytest.mark.asyncio
@@ -191,7 +211,7 @@ async def test_search_publications_raises_clear_error_on_invalid_efetch_xml(
     )
     source._api_key = None
     source._email = "test@example.com"
-    monkeypatch.setattr("clinical_trials_mcp.sources.pubmed.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("Medical_Wizard_MCP.sources.pubmed.asyncio.sleep", fake_sleep)
 
     with pytest.raises(RuntimeError, match="PubMed efetch returned invalid XML"):
         await source.search_publications("mrna vaccine")
