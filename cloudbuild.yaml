@@ -29,7 +29,7 @@ steps:
       - '3600'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'FASTMCP_HOST=0.0.0.0,FASTMCP_PORT=8000,MCP_VERSION=$TAG_NAME'
+      - 'FASTMCP_HOST=0.0.0.0,FASTMCP_PORT=8000,MCP_VERSION=$TAG_NAME,BIGQUERY_PROJECT_ID=ai-hack26ham-475,BIGQUERY_DATASET=illnesses,BIGQUERY_ONCOLOGY_VIEW=oncology_burden_search,BIGQUERY_LOCATION=US'
       - '--set-secrets'
       - 'JWT_SECRET=JWT_SECRET:latest'
 
