@@ -24,7 +24,36 @@ LIST_RESPONSE = {
 
 
 @pytest.mark.asyncio
-async def test_search_trials_switches_to_curl_after_first_403() -> None:
+async def test_search_trials_defaults_to_curl() -> None:
+    source = ClinicalTrialsSource()
+
+    async def fake_curl(
+        path: str,
+        *,
+        params: dict[str, str],
+        stage: str,
+        allow_not_found: bool = False,
+    ) -> dict[str, object]:
+        assert path == "/studies"
+        assert stage == "search_trials"
+        assert allow_not_found is False
+        assert params["query.cond"] == "lung cancer"
+        return LIST_RESPONSE
+
+    source._get_json_via_curl = fake_curl  # type: ignore[method-assign]
+
+    results = await source.search_trials("lung cancer", max_results=1)
+
+    assert len(results) == 1
+    assert results[0].nct_id == "NCT12345678"
+    assert source._prefer_curl is True
+
+
+@pytest.mark.asyncio
+async def test_search_trials_switches_to_curl_after_first_403_when_opted_into_httpx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLINICALTRIALS_PREFER_CURL", "0")
     calls: list[dict[str, str]] = []
     curl_calls: list[tuple[str, str]] = []
 
@@ -127,7 +156,10 @@ async def test_search_trials_raises_clear_error_when_curl_fallback_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_get_trial_details_uses_shared_curl_transport_after_403() -> None:
+async def test_get_trial_details_uses_shared_curl_transport_after_403(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLINICALTRIALS_PREFER_CURL", "0")
     calls = 0
     detail_response = {
         "protocolSection": {
@@ -199,3 +231,11 @@ def test_apply_phase_filter_composes_with_existing_advanced_filter() -> None:
     source._apply_phase_filter(params, "PHASE2")
 
     assert params["filter.advanced"] == "(AREA[LeadSponsorName]BioNTech) AND (AREA[Phase]PHASE2)"
+
+
+def test_env_prefers_curl_respects_false_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLINICALTRIALS_PREFER_CURL", "false")
+
+    source = ClinicalTrialsSource()
+
+    assert source._prefer_curl is False

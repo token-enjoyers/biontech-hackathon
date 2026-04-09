@@ -387,6 +387,10 @@ async def test_extended_intelligence_tools_return_expected_shapes(monkeypatch: p
     assert endpoints["result"]["primary_endpoint_categories"]
     assert evidence["result"]["link_type"] == "query_based_association"
     assert evidence["_meta"]["evidence_trace"][-1]["step"] == "assemble_evidence_links"
+    evidence_urls = {ref["url"] for ref in evidence["_meta"]["evidence_refs"]}
+    assert "https://clinicaltrials.gov/study/NCT00000111" in evidence_urls
+    assert "https://pubmed.ncbi.nlm.nih.gov/1001/" in evidence_urls
+    assert "https://doi.org/10.1101/2025.02.01.123456" in evidence_urls
     assert evidence["result"]["evidence_summary"]["publication_count"] == 1
     assert segments["result"]["biomarker_segments"]
     assert readouts["result"]["forecast_type"] == "known_dates_plus_phase_benchmarks"

@@ -68,6 +68,7 @@ Args:
                     "note": "Rejected the request because no usable literature search terms were provided.",
                     "filters": requested_filters,
                     "output_kind": "raw",
+                    "refs": [],
                 }
             ],
         )
@@ -99,6 +100,7 @@ Args:
                     "max_results": max_results,
                 },
                 "output_kind": "raw",
+                "refs": payload,
             }
         ],
         requested_filters={
@@ -171,6 +173,7 @@ Args:
                     "note": "Rejected the request because no usable literature search terms were provided.",
                     "filters": requested_filters,
                     "output_kind": "raw",
+                    "refs": [],
                 }
             ],
         )
@@ -202,6 +205,7 @@ Args:
                     "max_results": max_results,
                 },
                 "output_kind": "raw",
+                "refs": payload,
             }
         ],
         requested_filters={

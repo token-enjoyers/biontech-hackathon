@@ -57,6 +57,7 @@ Args:
                     "max_results": max_results,
                 },
                 "output_kind": "raw",
+                "refs": payload,
             }
         ],
         requested_filters={

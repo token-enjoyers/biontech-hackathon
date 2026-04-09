@@ -181,6 +181,7 @@ mcpServers:
 ```bash
 PUBMED_API_KEY=       # increases PubMed rate limit from 3 to 10 req/s
 PUBMED_EMAIL=         # recommended by NCBI for identification
+CLINICALTRIALS_PREFER_CURL=1  # default transport for ClinicalTrials.gov; set to 0 to retry httpx first
 ```
 
 ---

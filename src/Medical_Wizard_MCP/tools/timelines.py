@@ -67,6 +67,7 @@ Args:
                         "condition": condition,
                     },
                     "output_kind": "raw",
+                    "refs": [],
                 }
             ],
         )
@@ -114,6 +115,7 @@ Args:
                     "max_results": max_results,
                 },
                 "output_kind": "raw",
+                "refs": payload,
             },
             {
                 "step": "derive_duration_metrics",
@@ -121,6 +123,7 @@ Args:
                 "note": "Computed months-to-completion and months-since-start from normalized timeline dates.",
                 "filters": {"indication": resolved_indication},
                 "output_kind": "derived",
+                "refs": payload,
             },
         ],
         requested_filters={

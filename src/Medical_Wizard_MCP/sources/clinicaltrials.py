@@ -51,7 +51,9 @@ class ClinicalTrialsSource(BaseSource):
     def _env_prefers_curl(self) -> bool:
         raw = os.getenv("CLINICALTRIALS_PREFER_CURL")
         if raw is None:
-            return False
+            # ClinicalTrials.gov currently blocks httpx consistently in this environment,
+            # while curl succeeds against the same API and query parameters.
+            return True
         return raw.strip().lower() not in {"0", "false", "no", "off"}
 
     def _browser_headers(self, params: dict[str, Any]) -> dict[str, str]:
