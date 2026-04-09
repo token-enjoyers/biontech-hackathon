@@ -1,28 +1,119 @@
+from typing import Any
+
 from ..server import mcp
 from ..sources import registry
+from ._responses import list_response
 
 
 @mcp.tool()
 async def search_publications(
-    query: str,
+    query: str | None = None,
+    term: str | None = None,
+    indication: str | None = None,
     max_results: int = 10,
     year_from: int | None = None,
-) -> list[dict]:
+) -> dict[str, Any]:
     """Search PubMed for scientific publications about clinical trials, therapies, or disease areas.
 
 Use this to find published trial results, mechanism-of-action research, review articles, or evidence supporting a trial design decision. Combine with search_trials to link trials to their published outcomes.
 
-Returns for each publication: pmid, title, authors, journal, pub_date, abstract, source.
+Returns a standardized list envelope with `_meta`, `count`, and `results`.
+Each publication result includes: pmid, title, authors, journal, pub_date, abstract, source.
 
 Args:
     query: PubMed search query (e.g. "mRNA vaccine glioblastoma", "pembrolizumab NSCLC phase 3 overall survival", "CAR-T cell therapy ALL")
+    term: Alias for query to match product-oriented tool naming
+    indication: Optional disease-area hint appended to the PubMed search query
     max_results: Number of results (default 10, max 15)
     year_from: Only return publications published on or after this year
     """
+    query_parts = [
+        value.strip()
+        for value in [query, term, indication]
+        if isinstance(value, str) and value.strip()
+    ]
+    if not query_parts:
+        raise ValueError("Provide at least one of `query` or `term`.")
+
+    effective_query = " ".join(dict.fromkeys(query_parts))
     max_results = min(max_results, 15)
-    results = await registry.search_publications(
-        query=query,
+    response = await registry.search_publications(
+        query=effective_query,
         max_results=max_results,
         year_from=year_from,
     )
-    return [r.model_dump() for r in results]
+    payload = [r.model_dump() for r in response.items]
+    return list_response(
+        tool_name="search_publications",
+        data_type="publication_search_results",
+        items=payload,
+        quality_note="Publication records are normalized from PubMed E-utilities responses.",
+        coverage="Peer-reviewed publications indexed in PubMed for the given query and optional year filter.",
+        queried_sources=response.queried_sources,
+        warnings=[warning.as_dict() for warning in response.warnings],
+        requested_filters={
+            "query": query,
+            "term": term,
+            "indication": indication,
+            "effective_query": effective_query,
+            "year_from": year_from,
+            "max_results": max_results,
+        },
+    )
+
+
+@mcp.tool()
+async def search_preprints(
+    query: str | None = None,
+    term: str | None = None,
+    indication: str | None = None,
+    max_results: int = 10,
+    year_from: int | None = None,
+) -> dict[str, Any]:
+    """Search medRxiv for recent preprints that have not yet been peer reviewed.
+
+Use this to surface early signals, unpublished mechanism research, or emerging competitive activity before results reach PubMed. Combine with search_trials when you want trial context plus preprint evidence.
+
+Returns a standardized list envelope with `_meta`, `count`, and `results`.
+Each preprint result includes: title, authors, journal, pub_date, abstract, doi, mesh_terms, source.
+
+Args:
+    query: Search query for medRxiv preprints
+    term: Alias for query to match product-oriented tool naming
+    indication: Optional disease-area hint appended to the query
+    max_results: Number of results (default 10, max 15)
+    year_from: Only return preprints from this year onward; otherwise the source searches a recent rolling window
+    """
+    query_parts = [
+        value.strip()
+        for value in [query, term, indication]
+        if isinstance(value, str) and value.strip()
+    ]
+    if not query_parts:
+        raise ValueError("Provide at least one of `query` or `term`.")
+
+    effective_query = " ".join(dict.fromkeys(query_parts))
+    max_results = min(max_results, 15)
+    response = await registry.search_preprints(
+        query=effective_query,
+        max_results=max_results,
+        year_from=year_from,
+    )
+    payload = [r.model_dump() for r in response.items]
+    return list_response(
+        tool_name="search_preprints",
+        data_type="preprint_search_results",
+        items=payload,
+        quality_note="Preprint records are normalized from medRxiv API responses and exclude entries that already list a published journal DOI.",
+        coverage="Recent medRxiv preprints filtered locally against the requested query and optional year range.",
+        queried_sources=response.queried_sources,
+        warnings=[warning.as_dict() for warning in response.warnings],
+        requested_filters={
+            "query": query,
+            "term": term,
+            "indication": indication,
+            "effective_query": effective_query,
+            "year_from": year_from,
+            "max_results": max_results,
+        },
+    )

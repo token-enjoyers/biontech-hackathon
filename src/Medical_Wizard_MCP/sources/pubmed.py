@@ -35,6 +35,7 @@ class PubMedSource(BaseSource):
     """PubMed E-utilities data source."""
 
     name = SOURCE_NAME
+    capabilities = frozenset({"publication_search"})
 
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
@@ -150,6 +151,8 @@ class PubMedSource(BaseSource):
             "journal": self._extract_journal(article_node),
             "pub_date": self._extract_pub_date(article, article_node),
             "abstract": self._extract_abstract(article_node),
+            "doi": self._extract_doi(article),
+            "mesh_terms": self._extract_mesh_terms(medline),
         }
 
     def _base_params(self) -> dict[str, str]:
@@ -208,6 +211,22 @@ class PubMedSource(BaseSource):
             else:
                 parts.append(text)
         return "\n\n".join(parts)
+
+    def _extract_doi(self, article: ET.Element) -> str | None:
+        for node in article.findall(".//PubmedData/ArticleIdList/ArticleId"):
+            if node.attrib.get("IdType") == "doi":
+                doi = self._extract_text(node)
+                if doi:
+                    return doi
+        return None
+
+    def _extract_mesh_terms(self, medline: ET.Element) -> list[str]:
+        terms: list[str] = []
+        for mesh_heading in medline.findall("MeshHeadingList/MeshHeading"):
+            descriptor = self._extract_text(mesh_heading.find("DescriptorName"))
+            if descriptor:
+                terms.append(descriptor)
+        return terms
 
     def _format_structured_date(self, node: ET.Element | None) -> str:
         if node is None:

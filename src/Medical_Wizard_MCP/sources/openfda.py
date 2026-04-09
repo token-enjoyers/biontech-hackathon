@@ -4,7 +4,7 @@ import logging
 
 import httpx
 
-from Medical_Wizard_MCP.models import TrialSummary
+from Medical_Wizard_MCP.models import ApprovedDrug
 from Medical_Wizard_MCP.sources.base import BaseSource
 
 logger = logging.getLogger(__name__)
@@ -50,8 +50,8 @@ def _first_text(label: dict, field: str) -> str | None:
     return values[0] if values else None
 
 
-def _map_label_to_summary(label: dict) -> TrialSummary | None:
-    """Map an OpenFDA drug label entry to a TrialSummary."""
+def _map_label_to_approved_drug(label: dict, indication: str) -> ApprovedDrug | None:
+    """Map an OpenFDA drug label entry to an ApprovedDrug."""
     openfda = label.get("openfda", {})
 
     app_numbers = openfda.get("application_number", [])
@@ -66,21 +66,16 @@ def _map_label_to_summary(label: dict) -> TrialSummary | None:
     if not identifier:
         return None
 
-    title_parts = brand_names or generic_names or [identifier]
-    brief_title = f"FDA {identifier}: {', '.join(title_parts[:3])}"
-
-    return TrialSummary(
+    return ApprovedDrug(
         source="openfda",
-        nct_id=f"FDA:{identifier}",
-        brief_title=brief_title,
-        phase=None,
-        overall_status="Approved",
-        lead_sponsor=manufacturer[0] if manufacturer else "Unknown",
-        interventions=list(substances[:5]),
-        primary_outcomes=[],
-        enrollment_count=None,
+        approval_id=identifier,
+        brand_name=brand_names[0] if brand_names else None,
+        generic_name=generic_names[0] if generic_names else None,
+        indication=indication,
+        sponsor=manufacturer[0] if manufacturer else None,
         route=list(routes),
         product_type=product_types[0] if product_types else None,
+        substance_names=list(substances[:5]),
         mechanism_of_action=_first_text(label, "mechanism_of_action"),
         pharmacodynamics=_first_text(label, "pharmacodynamics"),
         pharmacokinetics=_first_text(label, "pharmacokinetics"),
@@ -99,10 +94,11 @@ class OpenFDASource(BaseSource):
     """OpenFDA API data source.
 
     Searches FDA drug labels (drug/label.json) by indication/condition.
-    Supports search_trials only; other methods fall back to default no-ops.
+    Supports approved-drug search; other methods fall back to default no-ops.
     """
 
     name = "openfda"
+    capabilities = frozenset({"approved_drug_search"})
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -114,21 +110,19 @@ class OpenFDASource(BaseSource):
         if self._client is not None:
             await self._client.aclose()
 
-    async def search_trials(
+    async def search_approved_drugs(
         self,
-        condition: str,
-        phase: str | None = None,
-        status: str | None = None,
+        indication: str,
         sponsor: str | None = None,
         intervention: str | None = None,
         max_results: int = 10,
-    ) -> list[TrialSummary]:
+    ) -> list[ApprovedDrug]:
         if self._client is None:
             logger.warning("OpenFDA source not initialized, skipping")
             return []
 
         search_query = _build_search_query(
-            condition=condition,
+            condition=indication,
             sponsor=sponsor,
             intervention=intervention,
         )
@@ -156,10 +150,10 @@ class OpenFDASource(BaseSource):
             logger.error("OpenFDA returned non-JSON response")
             return []
 
-        results: list[TrialSummary] = []
+        results: list[ApprovedDrug] = []
         for label in data.get("results", []):
-            summary = _map_label_to_summary(label)
-            if summary is not None:
-                results.append(summary)
+            approved_drug = _map_label_to_approved_drug(label, indication=indication)
+            if approved_drug is not None:
+                results.append(approved_drug)
 
         return results[:max_results]

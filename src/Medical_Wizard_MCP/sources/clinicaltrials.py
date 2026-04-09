@@ -14,6 +14,7 @@ class ClinicalTrialsSource(BaseSource):
     """ClinicalTrials.gov API v2 data source."""
 
     name = "clinicaltrials_gov"
+    capabilities = frozenset({"trial_search", "trial_details", "trial_timelines"})
 
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
@@ -34,6 +35,31 @@ class ClinicalTrialsSource(BaseSource):
         if not phases:
             return None
         return "/".join(p.replace("PHASE", "Phase ") for p in phases)
+
+    async def _fetch_studies(self, params: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+        studies: list[dict[str, Any]] = []
+        page_token: str | None = None
+
+        while len(studies) < limit:
+            request_params = dict(params)
+            request_params["pageSize"] = min(max(limit - len(studies), 1), 100)
+            if page_token:
+                request_params["pageToken"] = page_token
+
+            response = await self._client.get("/studies", params=request_params)
+            response.raise_for_status()
+            data = response.json()
+
+            batch = data.get("studies", [])
+            if not batch:
+                break
+
+            studies.extend(batch)
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        return studies[:limit]
 
     def _normalize_summary(self, study: dict[str, Any]) -> dict[str, Any]:
         proto = study.get("protocolSection", {})
@@ -58,6 +84,9 @@ class ClinicalTrialsSource(BaseSource):
                 o.get("measure", "") for o in outcomes.get("primaryOutcomes", [])
             ],
             "enrollment_count": design.get("enrollmentInfo", {}).get("count"),
+            "start_date": status.get("startDateStruct", {}).get("date"),
+            "primary_completion_date": status.get("primaryCompletionDateStruct", {}).get("date"),
+            "completion_date": status.get("completionDateStruct", {}).get("date"),
         }
 
     def _normalize_detail(self, study: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +108,7 @@ class ClinicalTrialsSource(BaseSource):
             ],
             "study_type": design.get("studyType"),
             "conditions": conditions_mod.get("conditions", []),
+            "why_stopped": proto.get("statusModule", {}).get("whyStopped"),
         })
         return data
 
@@ -95,6 +125,7 @@ class ClinicalTrialsSource(BaseSource):
             "brief_title": ident.get("briefTitle", ""),
             "phase": self._phase_str(design),
             "lead_sponsor": sponsor.get("leadSponsor", {}).get("name", ""),
+            "overall_status": status.get("overallStatus", ""),
             "start_date": status.get("startDateStruct", {}).get("date"),
             "primary_completion_date": status.get("primaryCompletionDateStruct", {}).get("date"),
             "completion_date": status.get("completionDateStruct", {}).get("date"),
@@ -116,7 +147,6 @@ class ClinicalTrialsSource(BaseSource):
     ) -> list[TrialSummary]:
         params: dict[str, Any] = {
             "query.cond": condition,
-            "pageSize": max_results,
             "format": "json",
         }
 
@@ -129,13 +159,9 @@ class ClinicalTrialsSource(BaseSource):
         if intervention:
             params["query.intr"] = intervention
 
-        response = await self._client.get("/studies", params=params)
-        response.raise_for_status()
-        data = response.json()
-
         return [
             TrialSummary(**self._normalize_summary(study))
-            for study in data.get("studies", [])
+            for study in await self._fetch_studies(params, max_results)
         ]
 
     async def get_trial_details(self, nct_id: str) -> TrialDetail | None:
@@ -153,22 +179,23 @@ class ClinicalTrialsSource(BaseSource):
         self,
         condition: str,
         sponsor: str | None = None,
+        phase: str | None = None,
+        status: str | None = None,
         max_results: int = 15,
     ) -> list[TrialTimeline]:
         params: dict[str, Any] = {
             "query.cond": condition,
-            "pageSize": max_results,
             "format": "json",
         }
 
         if sponsor:
             params["query.term"] = sponsor
-
-        response = await self._client.get("/studies", params=params)
-        response.raise_for_status()
-        data = response.json()
+        if phase:
+            params["filter.phase"] = phase.upper().replace(" ", "")
+        if status:
+            params["filter.overallStatus"] = status.upper()
 
         return [
             TrialTimeline(**self._normalize_timeline(study))
-            for study in data.get("studies", [])
+            for study in await self._fetch_studies(params, max_results)
         ]
