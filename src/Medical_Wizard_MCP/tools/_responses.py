@@ -16,7 +16,7 @@ request_start_var: ContextVar[float] = ContextVar("request_start", default=0.0)
 
 _audit_logger = logging.getLogger("gxp.audit")
 if not _audit_logger.handlers:
-    _handler = logging.FileHandler("audit.log", mode="a", encoding="utf-8")
+    _handler = logging.StreamHandler()
     _handler.setFormatter(logging.Formatter("%(message)s"))
     _audit_logger.addHandler(_handler)
     _audit_logger.setLevel(logging.INFO)
