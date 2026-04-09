@@ -11,21 +11,16 @@ from ._evidence_refs import document_refs_from_nested_data
 from ._tool_catalog import OUTPUT_KIND_NOTES, get_tool_metadata
 
 try:
-    from opentelemetry.sdk._logs import LoggerProvider
-    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-    from opentelemetry._logs import set_logger_provider
-    from opentelemetry.sdk.resources import Resource
+    import grpc
+    from opentelemetry.proto.collector.logs.v1 import logs_service_pb2
+    from opentelemetry.proto.collector.logs.v1 import logs_service_pb2_grpc
+    from opentelemetry.proto.common.v1 import common_pb2
+    from opentelemetry.proto.logs.v1 import logs_pb2
+    from opentelemetry.proto.resource.v1 import resource_pb2
 
     _OTEL_GRPC_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "34.51.251.60:4317")
-    _resource = Resource.create({"service.name": "medical-wizard-mcp"})
-    _logger_provider = LoggerProvider(resource=_resource)
-    _logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(
-            OTLPLogExporter(endpoint=_OTEL_GRPC_ENDPOINT, insecure=True)
-        )
-    )
-    set_logger_provider(_logger_provider)
+    _grpc_channel = grpc.insecure_channel(_OTEL_GRPC_ENDPOINT)
+    _grpc_stub = logs_service_pb2_grpc.LogsServiceStub(_grpc_channel)
     _otel_available = True
 except Exception:
     _otel_available = False
@@ -70,32 +65,57 @@ def _write_audit_log(
     # Konsole
     _audit_logger.info(serialized)
 
-    # SigNoz via OpenTelemetry
+    # SigNoz via raw gRPC + OTLP protobuf
     if _otel_available:
         try:
-            from opentelemetry._logs import get_logger
-            from opentelemetry.sdk._logs import LogRecord
-            from opentelemetry.trace import INVALID_SPAN_CONTEXT
             import time as _time
-            otel_logger = get_logger("gxp.audit")
-            record = LogRecord(
-                timestamp=int(_time.time_ns()),
-                observed_timestamp=int(_time.time_ns()),
-                trace_id=INVALID_SPAN_CONTEXT.trace_id,
-                span_id=INVALID_SPAN_CONTEXT.span_id,
-                trace_flags=INVALID_SPAN_CONTEXT.trace_flags,
-                severity_text="INFO",
-                severity_number=9,
-                body=serialized,
-                resource=_resource,
-                attributes={
-                    "tool": tool_name,
-                    "conversation_id": conversation_id_var.get() or "",
-                    "result_count": result_count,
-                    "status": entry["status"],
-                },
+            now_ns = _time.time_ns()
+            grpc_request = logs_service_pb2.ExportLogsServiceRequest(
+                resource_logs=[
+                    logs_pb2.ResourceLogs(
+                        resource=resource_pb2.Resource(
+                            attributes=[
+                                common_pb2.KeyValue(
+                                    key="service.name",
+                                    value=common_pb2.AnyValue(string_value="medical-wizard-mcp"),
+                                )
+                            ]
+                        ),
+                        scope_logs=[
+                            logs_pb2.ScopeLogs(
+                                log_records=[
+                                    logs_pb2.LogRecord(
+                                        time_unix_nano=now_ns,
+                                        observed_time_unix_nano=now_ns,
+                                        severity_text="INFO",
+                                        severity_number=logs_pb2.SEVERITY_NUMBER_INFO,
+                                        body=common_pb2.AnyValue(string_value=serialized),
+                                        attributes=[
+                                            common_pb2.KeyValue(
+                                                key="tool",
+                                                value=common_pb2.AnyValue(string_value=tool_name),
+                                            ),
+                                            common_pb2.KeyValue(
+                                                key="conversation_id",
+                                                value=common_pb2.AnyValue(string_value=conversation_id_var.get() or ""),
+                                            ),
+                                            common_pb2.KeyValue(
+                                                key="result_count",
+                                                value=common_pb2.AnyValue(int_value=result_count),
+                                            ),
+                                            common_pb2.KeyValue(
+                                                key="status",
+                                                value=common_pb2.AnyValue(string_value=entry["status"]),
+                                            ),
+                                        ],
+                                    )
+                                ]
+                            )
+                        ],
+                    )
+                ]
             )
-            otel_logger.emit(record)
+            _grpc_stub.Export(grpc_request, timeout=5)
         except Exception:
             pass
 
