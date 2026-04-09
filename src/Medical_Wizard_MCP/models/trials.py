@@ -11,6 +11,20 @@ class TrialSummary(BaseModel):
     interventions: list[str] = []
     primary_outcomes: list[str] = []
     enrollment_count: int | None = None
+    # Methodology fields — populated where available
+    route: list[str] = []
+    product_type: str | None = None
+    mechanism_of_action: str | None = None
+    pharmacodynamics: str | None = None
+    pharmacokinetics: str | None = None
+    clinical_pharmacology: str | None = None
+    clinical_studies_summary: str | None = None
+    dosage_and_administration: str | None = None
+    dosage_forms_and_strengths: str | None = None
+    warnings: str | None = None
+    adverse_reactions: str | None = None
+    contraindications: str | None = None
+    drug_interactions: str | None = None
 
 
 class TrialDetail(TrialSummary):
