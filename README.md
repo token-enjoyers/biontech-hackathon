@@ -47,6 +47,7 @@ As of the current codebase, the server exposes `30` MCP tools:
 - `search_preprints`
 - `search_conference_abstracts`
 - `search_approved_drugs`
+- `search_oncology_burden`
 - `compare_trials`
 - `get_trial_density`
 - `find_whitespaces`
@@ -258,10 +259,19 @@ Commonly useful variables:
 
 ```bash
 JWT_SECRET=dev-secret
-PUBMED_API_KEY=
-PUBMED_EMAIL=
-CLINICALTRIALS_PREFER_CURL=1
-FASTMCP_LOG_LEVEL=DEBUG
+PUBMED_API_KEY=       # increases PubMed rate limit from 3 to 10 req/s
+PUBMED_EMAIL=         # recommended by NCBI for identification
+CLINICALTRIALS_PREFER_CURL=1  # default transport for ClinicalTrials.gov; set to 0 to retry httpx first
+BIGQUERY_PROJECT_ID=          # required for the BigQuery oncology burden source
+BIGQUERY_DATASET=             # optional if BIGQUERY_ONCOLOGY_VIEW is fully qualified
+BIGQUERY_ONCOLOGY_VIEW=       # BigQuery view or table to query; defaults to oncology_burden_search inside BIGQUERY_DATASET
+BIGQUERY_LOCATION=            # optional BigQuery job location, e.g. EU or US
+```
+
+For local BigQuery development with ADC, authenticate once with:
+
+```bash
+gcloud auth application-default login
 ```
 
 Notes:

@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from Medical_Wizard_MCP.models import ApprovedDrug, ConferenceAbstract, Publication, TrialDetail, TrialSummary, TrialTimeline
+from Medical_Wizard_MCP.models import (
+    ApprovedDrug,
+    ConferenceAbstract,
+    OncologyBurdenRecord,
+    Publication,
+    TrialDetail,
+    TrialSummary,
+    TrialTimeline,
+)
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult, SourceWarning
 from Medical_Wizard_MCP.tools.catalog import describe_tools
 from Medical_Wizard_MCP.tools.conferences import search_conference_abstracts
 from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
+from Medical_Wizard_MCP.tools.oncology_burden import search_oncology_burden
 from Medical_Wizard_MCP.tools.publications import search_preprints, search_publications
 from Medical_Wizard_MCP.tools.search import get_trial_details, search_trials
 from Medical_Wizard_MCP.tools.timelines import get_trial_timelines
@@ -305,6 +314,99 @@ async def test_search_approved_drugs_returns_standard_envelope(
     assert response["_meta"]["source"] == "openfda"
     assert response["_meta"]["requested_filters"]["indication"] == "NSCLC"
     assert response["results"][0]["approval_id"] == "BLA123456"
+
+
+@pytest.mark.asyncio
+async def test_search_oncology_burden_returns_standard_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_search_oncology_burden(**_: object) -> ListQueryResult[OncologyBurdenRecord]:
+        return ListQueryResult(
+            queried_sources=["bigquery_oncology"],
+            warnings=[],
+            items=[
+                OncologyBurdenRecord(
+                    source="bigquery_oncology",
+                    dataset="deaths_light",
+                    study="Historical data",
+                    registry="National Cancer Registry of Austria",
+                    country="Austria",
+                    sex="Male",
+                    site="Lung",
+                    indicator="Mortality",
+                    geo_code=None,
+                    year=1983,
+                    age_min=0,
+                    age_max=4,
+                    cases=0.0,
+                    population=229620.0,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "Medical_Wizard_MCP.tools.oncology_burden.registry.search_oncology_burden",
+        fake_search_oncology_burden,
+    )
+
+    response = await search_oncology_burden(indication="lung cancer", country="Austria", indicator="deaths")
+
+    assert response["count"] == 1
+    assert response["_meta"]["tool"] == "search_oncology_burden"
+    assert response["_meta"]["tool_category"] == "discovery"
+    assert response["_meta"]["output_kind"] == "raw"
+    assert response["_meta"]["source"] == "bigquery_oncology"
+    assert response["_meta"]["routing_hints"]["parameter_aliases"]["indication"] == "site"
+    assert response["_meta"]["requested_filters"]["site"] == "Lung"
+    assert response["_meta"]["requested_filters"]["indicator"] == "Mortality"
+    assert response["_meta"]["evidence_trace"][0]["step"] == "query_bigquery_oncology_view"
+    assert response["results"][0]["country"] == "Austria"
+    assert response["results"][0]["indicator"] == "Mortality"
+
+
+@pytest.mark.asyncio
+async def test_search_oncology_burden_requires_core_filters() -> None:
+    response = await search_oncology_burden(sex="Female", year=2020)
+
+    assert response["count"] == 0
+    assert response["_meta"]["partial_failures"][0]["source"] == "tool_validation"
+    assert response["_meta"]["requested_filters"]["sex"] == "Female"
+    assert response["_meta"]["evidence_trace"][0]["step"] == "validate_oncology_filters"
+
+
+@pytest.mark.asyncio
+async def test_search_oncology_burden_coerces_numeric_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_search_oncology_burden(**kwargs: object) -> ListQueryResult[OncologyBurdenRecord]:
+        captured.update(kwargs)
+        return ListQueryResult(queried_sources=["bigquery_oncology"], warnings=[], items=[])
+
+    monkeypatch.setattr(
+        "Medical_Wizard_MCP.tools.oncology_burden.registry.search_oncology_burden",
+        fake_search_oncology_burden,
+    )
+
+    response = await search_oncology_burden(
+        site="breast cancer",
+        country="Germany",
+        sex="women",
+        indicator="cases",
+        year="2022",
+        age_min="40",
+        age_max="49",
+        max_results=10,
+    )
+
+    assert response["count"] == 0
+    assert captured["site"] == "Breast"
+    assert captured["sex"] == "Female"
+    assert captured["indicator"] == "Incidence"
+    assert captured["year"] == 2022
+    assert captured["age_min"] == 40
+    assert captured["age_max"] == 49
 
 
 @pytest.mark.asyncio

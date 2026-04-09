@@ -5,7 +5,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 
-from ..models import ApprovedDrug, ConferenceAbstract, Publication, TrialDetail, TrialSummary, TrialTimeline
+from ..models import (
+    ApprovedDrug,
+    ConferenceAbstract,
+    OncologyBurdenRecord,
+    Publication,
+    TrialDetail,
+    TrialSummary,
+    TrialTimeline,
+)
 from .base import BaseSource
 
 logger = logging.getLogger(__name__)
@@ -492,6 +500,77 @@ class SourceRegistry:
                 if part
             ).lower()
             or getattr(item, "source_id", None),
+        )
+
+        return ListQueryResult(
+            items=merged_results[:max_results],
+            queried_sources=[source.name for source in sources],
+            warnings=warnings,
+        )
+
+    async def search_oncology_burden(
+        self,
+        *,
+        site: str | None = None,
+        country: str | None = None,
+        sex: str | None = None,
+        indicator: str | None = None,
+        year: int | None = None,
+        age_min: int | None = None,
+        age_max: int | None = None,
+        max_results: int = 10,
+    ) -> ListQueryResult[OncologyBurdenRecord]:
+        await self.initialize_all()
+        sources, warnings = self._sources_for("oncology_burden_search")
+
+        results: list[OncologyBurdenRecord] = []
+        outcomes = await asyncio.gather(
+            *[
+                source.search_oncology_burden(
+                    site=site,
+                    country=country,
+                    sex=sex,
+                    indicator=indicator,
+                    year=year,
+                    age_min=age_min,
+                    age_max=age_max,
+                    max_results=max_results,
+                )
+                for source in sources
+            ],
+            return_exceptions=True,
+        )
+
+        for source, outcome in zip(sources, outcomes):
+            if isinstance(outcome, Exception):
+                warnings.append(
+                    SourceWarning(
+                        source=source.name,
+                        stage="search_oncology_burden",
+                        error=str(outcome) or outcome.__class__.__name__,
+                    )
+                )
+                logger.error("Source %s failed during search_oncology_burden: %s", source.name, outcome)
+                continue
+
+            results.extend(outcome)
+
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda record: "|".join(
+                [
+                    str(getattr(record, "dataset", "") or ""),
+                    str(getattr(record, "country", "") or ""),
+                    str(getattr(record, "sex", "") or ""),
+                    str(getattr(record, "site", "") or ""),
+                    str(getattr(record, "indicator", "") or ""),
+                    str(getattr(record, "geo_code", "") or ""),
+                    str(getattr(record, "year", "") or ""),
+                    str(getattr(record, "age_min", "") or ""),
+                    str(getattr(record, "age_max", "") or ""),
+                ]
+            ),
         )
 
         return ListQueryResult(

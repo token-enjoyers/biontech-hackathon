@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..models import ApprovedDrug, ConferenceAbstract, Publication, TrialDetail, TrialSummary, TrialTimeline
+from ..models import (
+    ApprovedDrug,
+    ConferenceAbstract,
+    OncologyBurdenRecord,
+    Publication,
+    TrialDetail,
+    TrialSummary,
+    TrialTimeline,
+)
 
 
 class BaseSource(ABC):
@@ -85,4 +93,18 @@ class BaseSource(ABC):
         max_results: int = 10,
         year_from: int | None = None,
     ) -> list[ConferenceAbstract]:
+        return []
+
+    async def search_oncology_burden(
+        self,
+        *,
+        site: str | None = None,
+        country: str | None = None,
+        sex: str | None = None,
+        indicator: str | None = None,
+        year: int | None = None,
+        age_min: int | None = None,
+        age_max: int | None = None,
+        max_results: int = 10,
+    ) -> list[OncologyBurdenRecord]:
         return []

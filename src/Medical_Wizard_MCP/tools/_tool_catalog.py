@@ -196,6 +196,37 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
             "watch_indication_signals",
         ],
     },
+    "search_oncology_burden": {
+        "category": "discovery",
+        "family": "oncology_burden",
+        "output_kind": "raw",
+        "stability": "stable",
+        "workflow_position": "primary",
+        "canonical_parameters": [
+            "site",
+            "country",
+            "sex",
+            "indicator",
+            "year",
+            "age_min",
+            "age_max",
+            "max_results",
+        ],
+        "parameter_aliases": {"indication": "site"},
+        "requires_identifiers": [],
+        "use_when": [
+            "You need oncology burden rows such as cases or deaths by cancer entity, country, sex, year, or age band.",
+            "You want epidemiology-style burden data rather than trials, publications, or approved drugs.",
+        ],
+        "avoid_when": [
+            "You need trial, publication, or approved-drug evidence instead of burden records.",
+        ],
+        "typical_next_tools": [
+            "search_trials",
+            "search_publications",
+            "search_approved_drugs",
+        ],
+    },
     "compare_trials": {
         "category": "analysis",
         "family": "trials",
