@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._evidence_refs import document_refs_from_nested_data
 from ._tool_catalog import OUTPUT_KIND_NOTES, get_tool_metadata
 
 
@@ -55,6 +56,26 @@ def _normalize_evidence_trace(
         if isinstance(item.get("output_kind"), str) and item["output_kind"]:
             entry["output_kind"] = item["output_kind"]
 
+        raw_refs = item.get("refs")
+        refs = document_refs_from_nested_data(raw_refs)
+        if not refs and isinstance(raw_refs, list):
+            normalized_refs = []
+            for ref in raw_refs:
+                if not isinstance(ref, dict):
+                    continue
+                if all(isinstance(ref.get(key), str) and ref[key] for key in ("source", "id", "label", "url")):
+                    normalized_refs.append(
+                        {
+                            "source": ref["source"],
+                            "id": ref["id"],
+                            "label": ref["label"],
+                            "url": ref["url"],
+                        }
+                    )
+            refs = sorted(normalized_refs, key=lambda ref: (ref["source"], ref["id"]))
+        if refs:
+            entry["evidence_refs"] = refs
+
         normalized.append(entry)
     return normalized
 
@@ -83,6 +104,15 @@ def _list_meta(
             if isinstance(source, str) and source
         }
     )
+    trace_refs = sorted(
+        {
+            (ref["source"], ref["id"], ref["label"], ref["url"])
+            for step in normalized_trace
+            for ref in step.get("evidence_refs", [])
+            if all(isinstance(ref.get(key), str) and ref[key] for key in ("source", "id", "label", "url"))
+        }
+    )
+    item_refs = document_refs_from_nested_data(items)
     evidence_sources = _normalize_source_list(evidence_sources)
     evidence_basis = sorted(set(evidence_sources + returned_sources + queried_sources + trace_sources))
     source_basis = returned_sources or queried_sources
@@ -110,6 +140,20 @@ def _list_meta(
         "returned_sources": returned_sources,
         "queried_sources": queried_sources,
         "evidence_sources": evidence_basis,
+        "evidence_refs": [
+            {
+                "source": source,
+                "id": doc_id,
+                "label": label,
+                "url": url,
+            }
+            for source, doc_id, label, url in sorted(
+                {
+                    (ref["source"], ref["id"], ref["label"], ref["url"])
+                    for ref in item_refs
+                }.union(trace_refs)
+            )
+        ],
         "evidence_trace": normalized_trace,
         "data_type": data_type,
         "result_schema_version": "2.0",

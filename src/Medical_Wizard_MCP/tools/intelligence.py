@@ -55,8 +55,9 @@ def _trace_step(
     note: str,
     filters: dict[str, Any] | None = None,
     output_kind: str,
+    refs: Any = None,
 ) -> dict[str, Any]:
-    return {
+    trace = {
         "step": step,
         "sources": sorted(set(sources or [])),
         "note": note,
@@ -67,6 +68,23 @@ def _trace_step(
         },
         "output_kind": output_kind,
     }
+    if refs is not None:
+        trace["refs"] = refs
+    return trace
+
+
+def _model_payloads(items: list[Any]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for item in items:
+        if hasattr(item, "model_dump"):
+            payload = item.model_dump()
+        elif isinstance(item, dict):
+            payload = item
+        else:
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
 
 
 def _trial_mechanisms(trial: TrialSummary | TrialDetail | dict[str, Any]) -> list[str]:
@@ -169,6 +187,7 @@ async def _fetch_details(
             output_kind="raw",
         )
     ]
+    trace[0]["refs"] = _model_payloads(details)
     return details, warnings, unique_sources, trace
 
 
@@ -212,6 +231,7 @@ async def _collect_trials_and_details(
         ),
         *detail_trace,
     ]
+    trace[0]["refs"] = _model_payloads(response.items)
     return response.items, details, warnings, queried_sources, trace
 
 
@@ -445,6 +465,7 @@ async def _analyze_competition_gaps_impl(
                 note="Collected active or non-completed trials for mechanism-density analysis.",
                 filters={"indication": indication, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(active_response.items),
             ),
             *(
                 [
@@ -454,6 +475,7 @@ async def _analyze_competition_gaps_impl(
                         note="Collected terminated trials to add stop-signal context.",
                         filters={"indication": indication, "status": "TERMINATED"},
                         output_kind="raw",
+                        refs=_model_payloads(terminated_response.items),
                     ),
                     *detail_trace,
                 ]
@@ -466,6 +488,7 @@ async def _analyze_competition_gaps_impl(
                 note="Classified mechanisms and scored low-density spaces using simple rule-based thresholds.",
                 filters={"indication": indication, "include_terminated": include_terminated},
                 output_kind="heuristic",
+                refs=terminated_rows[:10],
             ),
         ],
         requested_filters={"indication": indication, "include_terminated": include_terminated},
@@ -530,6 +553,7 @@ async def compare_trials(nct_ids: list[str]) -> dict[str, Any]:
                 note="Aligned comparable trial fields and extracted biomarker hints from normalized detail text.",
                 filters={"nct_ids": requested_ids},
                 output_kind="derived",
+                refs=comparison_rows,
             ),
         ],
         requested_filters={"nct_ids": requested_ids},
@@ -607,6 +631,7 @@ Use this when you need counts by phase, intervention type, or sponsor rather tha
                 note="Fetched comparable trials for the requested indication and optional status filter.",
                 filters={"indication": indication, "status": status, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(response.items),
             ),
             _trace_step(
                 "aggregate_trial_density",
@@ -614,6 +639,7 @@ Use this when you need counts by phase, intervention type, or sponsor rather tha
                 note="Grouped the retrieved trial rows by phase, sponsor, or heuristic intervention type.",
                 filters={"indication": indication, "group_by": group_by, "status": status},
                 output_kind="derived",
+                refs=_model_payloads(response.items),
             ),
         ],
         requested_filters={"indication": indication, "group_by": group_by, "status": status},
@@ -733,6 +759,7 @@ Use this when you want sponsor and mechanism concentration rather than raw trial
                 note="Fetched trial rows for the requested competitive slice.",
                 filters={"indication": indication, "phase": phase, "status": status, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(response.items),
             ),
             _trace_step(
                 "aggregate_competitive_landscape",
@@ -740,6 +767,7 @@ Use this when you want sponsor and mechanism concentration rather than raw trial
                 note="Grouped trials by sponsor and heuristic mechanism labels, then computed a simple saturation score.",
                 filters={"indication": indication, "phase": phase, "status": status},
                 output_kind="derived",
+                refs=sponsors,
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "status": status},
@@ -798,6 +826,7 @@ async def get_recruitment_velocity(
                 note="Retrieved normalized timeline rows for the requested indication.",
                 filters={"indication": indication, "phase": phase, "sponsor": sponsor, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=payload,
             ),
             _trace_step(
                 "estimate_recruitment_velocity",
@@ -805,6 +834,7 @@ async def get_recruitment_velocity(
                 note="Estimated enrollment-per-month from enrollment targets and observed or elapsed durations.",
                 filters={"indication": indication, "phase": phase, "sponsor": sponsor},
                 output_kind="derived",
+                refs=rows,
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor},
@@ -938,6 +968,7 @@ Use this only when the user explicitly wants a server-generated recommendation. 
                 note="Loaded a heuristic gap scan to identify sparse or failure-prone mechanism spaces.",
                 filters={"indication": indication, "include_terminated": True},
                 output_kind="heuristic",
+                refs=((whitespace.get("_meta") or {}).get("evidence_refs", [])),
             ),
             _trace_step(
                 "search_candidate_trials",
@@ -945,6 +976,7 @@ Use this only when the user explicitly wants a server-generated recommendation. 
                 note="Fetched trials matching the requested indication and mechanism.",
                 filters={"indication": indication, "mechanism": mechanism, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(candidate_trials.items),
             ),
             _trace_step(
                 "search_supporting_publications",
@@ -952,6 +984,7 @@ Use this only when the user explicitly wants a server-generated recommendation. 
                 note="Fetched peer-reviewed evidence relevant to the mechanism and indication.",
                 filters={"query": f"{mechanism} {indication}", "year_from": 2018, "max_results": 8},
                 output_kind="raw",
+                refs=_model_payloads(publication_response.items),
             ),
             *detail_trace,
             _trace_step(
@@ -960,6 +993,7 @@ Use this only when the user explicitly wants a server-generated recommendation. 
                 note="Combined trial patterns, publication hints, and gap heuristics into a draft recommendation.",
                 filters={"indication": indication, "mechanism": mechanism},
                 output_kind="heuristic",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "mechanism": mechanism},
@@ -1058,6 +1092,7 @@ Use this only when the user explicitly wants a server-generated profile draft ra
                 note="Fetched completed trials for the requested indication and mechanism.",
                 filters={"indication": indication, "mechanism": mechanism, "status": "COMPLETED"},
                 output_kind="raw",
+                refs=_model_payloads(completed_trials.items),
             ),
             _trace_step(
                 "search_supporting_publications",
@@ -1069,6 +1104,7 @@ Use this only when the user explicitly wants a server-generated profile draft ra
                     "max_results": 8,
                 },
                 output_kind="raw",
+                refs=_model_payloads(publications.items),
             ),
             *detail_trace,
             _trace_step(
@@ -1077,6 +1113,7 @@ Use this only when the user explicitly wants a server-generated profile draft ra
                 note="Applied heuristic inclusion, exclusion, and biomarker rules to produce a draft patient profile.",
                 filters={"indication": indication, "mechanism": mechanism, "biomarker": biomarker},
                 output_kind="heuristic",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "mechanism": mechanism, "biomarker": biomarker},
@@ -1173,6 +1210,7 @@ async def benchmark_trial_design(
                 note="Aggregated study types, archetypes, enrollment, endpoints, biomarkers, and comparator signals across the detail sample.",
                 filters={"indication": indication, "phase": phase, "mechanism": mechanism, "sponsor": sponsor},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism, "sponsor": sponsor},
@@ -1243,6 +1281,7 @@ async def benchmark_eligibility_criteria(
                 note="Applied rule-based extraction to eligibility text to summarize common inclusion, exclusion, and CNS handling patterns.",
                 filters={"indication": indication, "phase": phase, "mechanism": mechanism},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
@@ -1312,6 +1351,7 @@ async def benchmark_endpoints(
                 note="Grouped endpoint text into high-level categories using deterministic endpoint rules.",
                 filters={"indication": indication, "phase": phase, "mechanism": mechanism},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
@@ -1420,6 +1460,7 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
                 note="Loaded the trial context used to generate evidence queries.",
                 filters={"nct_id": nct_id},
                 output_kind="raw",
+                refs=[trial.model_dump()],
             ),
             _trace_step(
                 "search_publications",
@@ -1427,6 +1468,7 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
                 note="Queried peer-reviewed literature using trial-derived terms.",
                 filters={"query": publication_query or nct_id, "year_from": 2018, "max_results": 6},
                 output_kind="raw",
+                refs=[item.model_dump() for item in publication_response.items],
             ),
             *(
                 [
@@ -1436,6 +1478,7 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
                         note="Queried preprints using trial-derived terms.",
                         filters={"query": preprint_query or publication_query or nct_id, "year_from": 2022, "max_results": 4},
                         output_kind="raw",
+                        refs=preprint_items,
                     )
                 ]
                 if include_preprints
@@ -1449,6 +1492,7 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
                         note="Queried approved-drug labels for trial-related indication and intervention context.",
                         filters={"indication": condition_hint, "intervention": intervention_hint or None, "max_results": 5},
                         output_kind="raw",
+                        refs=approval_items,
                     )
                 ]
                 if include_approvals and condition_hint
@@ -1460,6 +1504,7 @@ Use this when you already have an NCT ID and want a quick bundle of likely relat
                 note="Packaged the query-based evidence associations into a single cross-source bundle.",
                 filters={"nct_id": nct_id, "include_preprints": include_preprints, "include_approvals": include_approvals},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"nct_id": nct_id, "include_preprints": include_preprints, "include_approvals": include_approvals},
@@ -1539,6 +1584,7 @@ async def analyze_patient_segments(
                 note="Applied rule-based segment extraction across merged title, condition, outcome, and eligibility text.",
                 filters={"indication": indication, "phase": phase, "mechanism": mechanism},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "mechanism": mechanism},
@@ -1593,6 +1639,7 @@ Use this only when estimated future dates are acceptable. Prefer timeline tools 
                 note="Fetched trial rows with available timing fields for the requested indication.",
                 filters={"indication": indication, "phase": phase, "sponsor": sponsor, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(response.items),
             ),
             _trace_step(
                 "forecast_readout_dates",
@@ -1600,6 +1647,7 @@ Use this only when estimated future dates are acceptable. Prefer timeline tools 
                 note="Used known completion dates when available and otherwise estimated dates from phase-duration benchmarks.",
                 filters={"indication": indication, "phase": phase, "sponsor": sponsor, "months_ahead": months_ahead},
                 output_kind="heuristic",
+                refs=forecast_rows,
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor, "months_ahead": months_ahead},
@@ -1691,6 +1739,7 @@ async def track_competitor_assets(
                 note="Fetched trial rows used to group sponsor assets.",
                 filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(response.items),
             ),
             _trace_step(
                 "group_competitor_assets",
@@ -1698,6 +1747,7 @@ async def track_competitor_assets(
                 note="Grouped interventions under sponsors and attached heuristic mechanism labels.",
                 filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism},
                 output_kind="derived",
+                refs=assets,
             ),
         ],
         requested_filters={"indication": indication, "sponsors": sponsors or [], "mechanism": mechanism},
@@ -1786,6 +1836,7 @@ async def summarize_safety_signals(
                 note="Fetched peer-reviewed safety-related literature.",
                 filters={"query": query, "year_from": year_from, "max_results": 8},
                 output_kind="raw",
+                refs=_model_payloads(publications.items),
             ),
             _trace_step(
                 "search_preprints",
@@ -1793,6 +1844,7 @@ async def summarize_safety_signals(
                 note="Fetched preprints for additional early safety signals.",
                 filters={"query": query, "year_from": year_from, "max_results": 5},
                 output_kind="raw",
+                refs=_model_payloads(preprints.items),
             ),
             _trace_step(
                 "search_approved_drug_labels",
@@ -1800,6 +1852,7 @@ async def summarize_safety_signals(
                 note="Fetched approved-drug labels for marketed safety context.",
                 filters={"indication": indication, "mechanism": mechanism, "max_results": 6},
                 output_kind="raw",
+                refs=_model_payloads(approvals.items),
             ),
             _trace_step(
                 "extract_safety_signal_patterns",
@@ -1807,6 +1860,7 @@ async def summarize_safety_signals(
                 note="Applied deterministic safety-term extraction across abstracts and label sections.",
                 filters={"indication": indication, "mechanism": mechanism, "year_from": year_from},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "mechanism": mechanism, "year_from": year_from},
@@ -1882,6 +1936,7 @@ async def investigator_site_landscape(
                 note="Aggregated countries, facilities, and visible study officials from recruiting-trial detail records.",
                 filters={"indication": indication, "phase": phase, "sponsor": sponsor, "status": "RECRUITING"},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={"indication": indication, "phase": phase, "sponsor": sponsor},
@@ -1971,6 +2026,7 @@ async def watch_indication_signals(
                 note="Fetched trial rows to summarize active programs and recent starts.",
                 filters={"indication": indication, "mechanism": mechanism, "sponsor": sponsor, "max_results": ANALYSIS_MAX_RESULTS},
                 output_kind="raw",
+                refs=_model_payloads(trials_response.items),
             ),
             _trace_step(
                 "search_publications",
@@ -1978,6 +2034,7 @@ async def watch_indication_signals(
                 note="Fetched recent peer-reviewed literature for the watch window.",
                 filters={"query": " ".join(part for part in [mechanism, indication] if part) or indication, "year_from": year_from, "max_results": 6},
                 output_kind="raw",
+                refs=_model_payloads(publications.items),
             ),
             _trace_step(
                 "search_preprints",
@@ -1985,6 +2042,7 @@ async def watch_indication_signals(
                 note="Fetched recent preprints for the watch window.",
                 filters={"query": " ".join(part for part in [mechanism, indication] if part) or indication, "year_from": year_from, "max_results": 6},
                 output_kind="raw",
+                refs=_model_payloads(preprints.items),
             ),
             _trace_step(
                 "search_approved_drug_labels",
@@ -1992,6 +2050,7 @@ async def watch_indication_signals(
                 note="Fetched approved-product context for the same indication slice.",
                 filters={"indication": indication, "mechanism": mechanism, "sponsor": sponsor, "max_results": 6},
                 output_kind="raw",
+                refs=_model_payloads(approvals.items),
             ),
             _trace_step(
                 "forecast_readouts",
@@ -1999,6 +2058,7 @@ async def watch_indication_signals(
                 note="Estimated upcoming readouts from known or phase-benchmark timing signals.",
                 filters={"indication": indication, "months_ahead": months_ahead},
                 output_kind="heuristic",
+                refs=forecast_rows,
             ),
             _trace_step(
                 "assemble_watch_snapshot",
@@ -2006,6 +2066,7 @@ async def watch_indication_signals(
                 note="Packaged the trial, publication, preprint, approval, and forecast signals into one watchlist snapshot.",
                 filters={"indication": indication, "mechanism": mechanism, "sponsor": sponsor, "recent_years": recent_years, "months_ahead": months_ahead},
                 output_kind="derived",
+                refs=[result],
             ),
         ],
         requested_filters={

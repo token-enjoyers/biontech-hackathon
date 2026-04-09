@@ -72,6 +72,7 @@ Args:
                         "condition": condition,
                     },
                     "output_kind": "raw",
+                    "refs": [],
                 }
             ],
         )
@@ -109,6 +110,7 @@ Args:
                     "max_results": max_results,
                 },
                 "output_kind": "raw",
+                "refs": payload,
             }
         ],
         requested_filters={
@@ -161,6 +163,7 @@ The trial detail includes: nct_id, brief_title, official_title, phase, overall_s
                     "note": "Rejected the request because the identifier did not match the NCT######## format.",
                     "filters": {"nct_id": nct_id},
                     "output_kind": "raw",
+                    "refs": [],
                 }
             ],
         )
@@ -183,6 +186,7 @@ The trial detail includes: nct_id, brief_title, official_title, phase, overall_s
                 "note": "Resolved the requested trial identifier against registered detail-capable sources.",
                 "filters": {"nct_id": nct_id},
                 "output_kind": "raw",
+                "refs": [detail.item.model_dump()] if detail.item is not None else [],
             }
         ],
         requested_filters={"nct_id": nct_id},

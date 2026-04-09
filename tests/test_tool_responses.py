@@ -48,6 +48,8 @@ async def test_search_trials_returns_list_envelope(monkeypatch: pytest.MonkeyPat
     assert response["_meta"]["queried_sources"] == ["clinicaltrials_gov"]
     assert response["_meta"]["evidence_sources"] == ["clinicaltrials_gov"]
     assert response["_meta"]["evidence_trace"][0]["step"] == "search_trial_registry"
+    assert response["_meta"]["evidence_trace"][0]["evidence_refs"][0]["url"].endswith("/NCT123")
+    assert response["_meta"]["evidence_refs"][0]["id"] == "NCT123"
     assert response["_meta"]["requested_filters"]["indication"] == "lung cancer"
     assert response["results"][0]["nct_id"] == "NCT123"
 
@@ -88,6 +90,7 @@ async def test_get_trial_details_returns_detail_envelope(monkeypatch: pytest.Mon
     assert response["_meta"]["routing_hints"]["requires_identifiers"] == ["nct_id"]
     assert response["_meta"]["evidence_sources"] == ["clinicaltrials_gov"]
     assert response["_meta"]["evidence_trace"][0]["step"] == "fetch_trial_detail"
+    assert response["_meta"]["evidence_refs"][0]["url"].endswith("/NCT00000123")
     assert response["result"]["nct_id"] == "NCT00000123"
     assert "message" not in response
 
@@ -164,12 +167,14 @@ async def test_list_tools_use_standard_envelope(monkeypatch: pytest.MonkeyPatch)
     assert timeline_response["_meta"]["tool"] == "get_trial_timelines"
     assert timeline_response["_meta"]["output_kind"] == "derived"
     assert timeline_response["_meta"]["evidence_trace"][1]["step"] == "derive_duration_metrics"
+    assert timeline_response["_meta"]["evidence_refs"][0]["id"] == "NCT321"
     assert timeline_response["results"][0]["nct_id"] == "NCT321"
 
     assert publication_response["count"] == 1
     assert publication_response["_meta"]["tool"] == "search_publications"
     assert publication_response["_meta"]["routing_hints"]["parameter_aliases"]["term"] == "query"
     assert publication_response["_meta"]["evidence_sources"] == ["pubmed"]
+    assert publication_response["_meta"]["evidence_refs"][0]["url"] == "https://pubmed.ncbi.nlm.nih.gov/12345/"
     assert publication_response["results"][0]["pmid"] == "12345"
     assert publication_response["results"][0]["doi"] == "10.1000/example"
 
@@ -290,6 +295,7 @@ async def test_search_preprints_returns_standard_envelope(
     assert response["_meta"]["requested_filters"]["indication"] == "GBM"
     assert response["_meta"]["requested_filters"]["effective_query"] == "mRNA vaccine GBM"
     assert response["_meta"]["evidence_trace"][0]["step"] == "search_medrxiv"
+    assert response["_meta"]["evidence_refs"][0]["url"] == "https://doi.org/10.1101/2024.03.01.123456"
     assert response["results"][0]["pmid"] is None
     assert response["results"][0]["doi"] == "10.1101/2024.03.01.123456"
 
