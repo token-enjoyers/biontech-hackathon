@@ -2,35 +2,65 @@ from typing import Any
 
 from ..server import mcp
 from ..sources import registry
+from ._inputs import coalesce_indication
 from ._intelligence import months_between, months_since
 from ._responses import list_response
 
 
 @mcp.tool()
 async def get_trial_timelines(
-    condition: str,
+    indication: str | None = None,
+    condition: str | None = None,
     sponsor: str | None = None,
     phase: str | None = None,
     status: str | None = None,
     max_results: int = 15,
 ) -> dict[str, Any]:
-    """Get start dates, completion dates, and enrollment numbers for clinical trials in a given indication.
+    """Timeline and enrollment tool for comparable trials.
 
-Use this to analyze how fast competitors are moving, estimate time-to-market, compare recruitment speed across sponsors, or assess feasibility of similar study designs.
+Use this when you need start dates, completion dates, enrollment, or derived duration metrics across a set of trials.
+
+Avoid this when you need full eligibility or arm-level detail for a single study.
 
 Returns a standardized list envelope with `_meta`, `count`, and `results`.
 Each trial timeline includes: nct_id, brief_title, phase, lead_sponsor, start_date, primary_completion_date, completion_date, enrollment_count, source.
 
 Args:
-    condition: Disease or condition (e.g. "NSCLC", "breast cancer", "glioblastoma")
+    indication: Canonical disease-area parameter (e.g. "NSCLC", "breast cancer", "glioblastoma")
+    condition: Backward-compatible alias for indication
     sponsor: Filter to a specific sponsor (e.g. "Roche", "Merck") — omit to see all sponsors
     phase: Optional phase filter (e.g. "PHASE2", "Phase 3")
     status: Optional status filter (e.g. "RECRUITING", "COMPLETED")
     max_results: Number of results (default 15, max 30)
     """
+    resolved_indication = coalesce_indication(indication=indication, condition=condition)
+    if resolved_indication is None:
+        return list_response(
+            tool_name="get_trial_timelines",
+            data_type="trial_timeline",
+            items=[],
+            quality_note="Timeline lookup requires a disease-area filter.",
+            coverage="Currently backed by ClinicalTrials.gov timeline data.",
+            warnings=[
+                {
+                    "source": "tool_validation",
+                    "stage": "validate_indication",
+                    "error": "Provide `indication` or the backward-compatible alias `condition`.",
+                }
+            ],
+            requested_filters={
+                "indication": indication,
+                "condition": condition,
+                "sponsor": sponsor,
+                "phase": phase,
+                "status": status,
+                "max_results": max_results,
+            },
+        )
+
     max_results = min(max_results, 30)
     response = await registry.get_trial_timelines(
-        condition=condition,
+        condition=resolved_indication,
         sponsor=sponsor,
         phase=phase,
         status=status,
@@ -58,6 +88,7 @@ Args:
         queried_sources=response.queried_sources,
         warnings=[warning.as_dict() for warning in response.warnings],
         requested_filters={
+            "indication": resolved_indication,
             "condition": condition,
             "sponsor": sponsor,
             "phase": phase,

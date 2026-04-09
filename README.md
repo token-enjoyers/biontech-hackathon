@@ -23,6 +23,7 @@ The project follows an LLM-first design:
 ---
 
 Implemented MCP tools today:
+- `describe_tools`
 - `search_trials`
 - `get_trial_details`
 - `get_trial_timelines`
@@ -31,6 +32,7 @@ Implemented MCP tools today:
 - `search_approved_drugs`
 - `compare_trials`
 - `get_trial_density`
+- `analyze_competition_gaps`
 - `find_whitespaces`
 - `competitive_landscape`
 - `get_recruitment_velocity`
@@ -190,15 +192,37 @@ PUBMED_EMAIL=         # recommended by NCBI for identification
 Tools return structured data. The LLM performs all analysis, comparison,
 and strategic interpretation. No analytics logic lives in the tool layer.
 
+In practice, the server now exposes three tool classes:
+
+- `raw`: source-aligned discovery or evidence retrieval
+- `derived`: server-side aggregation over raw records
+- `heuristic`: server-side estimation or recommendation that should be treated as a draft
+
+If an attached LLM is unsure which tool to use, call `describe_tools` first.
+
+For domain filters, prefer the canonical parameter name `indication`.
+Some tools still accept backward-compatible aliases such as `condition`.
+
 Every tool response follows this envelope:
 
 ```json
 {
   "_meta": {
-    "source": "clinicaltrials",
-    "data_type": "trial_registry",
+    "tool": "search_trials",
+    "tool_category": "discovery",
+    "output_kind": "raw",
+    "source": "clinicaltrials_gov",
+    "data_type": "trial_search_results",
     "quality_note": "...",
-    "coverage": "..."
+    "coverage": "...",
+    "requested_filters": {},
+    "partial_failures": [],
+    "routing_hints": {
+      "canonical_parameters": ["indication", "phase", "status", "sponsor", "intervention", "max_results"],
+      "parameter_aliases": {"condition": "indication"},
+      "requires_identifiers": [],
+      "typical_next_tools": ["get_trial_details", "get_trial_timelines"]
+    }
   },
   "count": 42,
   "results": []

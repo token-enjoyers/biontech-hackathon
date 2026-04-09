@@ -12,10 +12,11 @@ async def search_approved_drugs(
     intervention: str | None = None,
     max_results: int = 10,
 ) -> dict[str, Any]:
-    """Search approved therapies in OpenFDA drug labels for an indication.
+    """Approved-product evidence tool.
 
-Use this to understand the currently approved treatment landscape, identify incumbent sponsors,
-or gather label-level pharmacology and safety context for already marketed therapies.
+Use this when you need standard-of-care, sponsor, pharmacology, or safety context from marketed products.
+
+Avoid this when you are searching investigational trials rather than approved therapies.
 
 Returns a standardized list envelope with `_meta`, `count`, and `results`.
 Each approved-drug result includes: approval_id, brand_name, generic_name, indication, sponsor,

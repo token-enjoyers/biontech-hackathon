@@ -5,6 +5,7 @@ import pytest
 from Medical_Wizard_MCP.models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult
 from Medical_Wizard_MCP.tools.intelligence import (
+    analyze_competition_gaps,
     analyze_patient_segments,
     benchmark_eligibility_criteria,
     benchmark_endpoints,
@@ -273,6 +274,7 @@ async def test_analysis_tools_return_expected_shapes(monkeypatch: pytest.MonkeyP
 
     comparison = await compare_trials(["NCT00000111", "NCT00000222"])
     density = await get_trial_density(indication="NSCLC", group_by="intervention_type")
+    gaps = await analyze_competition_gaps(indication="NSCLC")
     whitespaces = await find_whitespaces(indication="NSCLC")
     landscape = await competitive_landscape(indication="NSCLC")
     velocity = await get_recruitment_velocity(indication="NSCLC")
@@ -280,7 +282,10 @@ async def test_analysis_tools_return_expected_shapes(monkeypatch: pytest.MonkeyP
     assert comparison["count"] == 2
     assert "TMB-high" in comparison["results"][0]["biomarkers"]
     assert density["result"]["distribution"]["mRNA vaccine"] >= 1
+    assert gaps["_meta"]["output_kind"] == "heuristic"
+    assert gaps["result"]["gap_signals"]
     assert whitespaces["result"]["terminated_trials"]["count"] == 1
+    assert whitespaces["_meta"]["deprecation"]["replacement_tool"] == "analyze_competition_gaps"
     assert landscape["result"]["market_saturation"]["total_active_trials"] == 1
     assert velocity["result"]["indication_average_per_month"] is not None
     assert velocity["result"]["results"][0]["enrollment_per_month"] is not None
@@ -317,9 +322,11 @@ async def test_design_tools_return_recommendations(monkeypatch: pytest.MonkeyPat
     patient_profile = await suggest_patient_profile(indication="NSCLC", mechanism="mRNA vaccine")
 
     assert design["result"]["recommended_phase"] in {"PHASE1", "PHASE2"}
+    assert design["result"]["recommendation_type"] == "heuristic_draft"
     assert design["result"]["confidence_score"] > 0
     assert "mRNA vaccine" in design["result"]["mechanism"]
     assert patient_profile["result"]["recommended_ecog"] == "0-1"
+    assert patient_profile["result"]["recommendation_type"] == "heuristic_draft"
     assert patient_profile["result"]["based_on_trials"] >= 1
     assert patient_profile["result"]["predictive_biomarkers"]
 
@@ -375,8 +382,10 @@ async def test_extended_intelligence_tools_return_expected_shapes(monkeypatch: p
     assert design_benchmark["result"]["primary_endpoint_categories"]
     assert eligibility["result"]["common_inclusion_criteria"]
     assert endpoints["result"]["primary_endpoint_categories"]
+    assert evidence["result"]["link_type"] == "query_based_association"
     assert evidence["result"]["evidence_summary"]["publication_count"] == 1
     assert segments["result"]["biomarker_segments"]
+    assert readouts["result"]["forecast_type"] == "known_dates_plus_phase_benchmarks"
     assert readouts["result"]["forecast"]
     assert assets["result"]["assets"]
     assert safety["result"]["signals"]

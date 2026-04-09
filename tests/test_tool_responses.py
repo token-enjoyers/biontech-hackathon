@@ -4,6 +4,7 @@ import pytest
 
 from Medical_Wizard_MCP.models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
 from Medical_Wizard_MCP.sources.registry import DetailQueryResult, ListQueryResult, SourceWarning
+from Medical_Wizard_MCP.tools.catalog import describe_tools
 from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
 from Medical_Wizard_MCP.tools.publications import search_preprints, search_publications
 from Medical_Wizard_MCP.tools.search import get_trial_details, search_trials
@@ -36,14 +37,16 @@ async def test_search_trials_returns_list_envelope(monkeypatch: pytest.MonkeyPat
         fake_search_trials,
     )
 
-    response = await search_trials(condition="lung cancer")
+    response = await search_trials(indication="lung cancer")
 
     assert response["count"] == 1
     assert response["_meta"]["tool"] == "search_trials"
+    assert response["_meta"]["tool_category"] == "discovery"
+    assert response["_meta"]["output_kind"] == "raw"
     assert response["_meta"]["source"] == "clinicaltrials_gov"
     assert response["_meta"]["sources"] == ["clinicaltrials_gov"]
     assert response["_meta"]["queried_sources"] == ["clinicaltrials_gov"]
-    assert response["_meta"]["requested_filters"]["condition"] == "lung cancer"
+    assert response["_meta"]["requested_filters"]["indication"] == "lung cancer"
     assert response["results"][0]["nct_id"] == "NCT123"
 
 
@@ -80,6 +83,7 @@ async def test_get_trial_details_returns_detail_envelope(monkeypatch: pytest.Mon
     response = await get_trial_details("NCT00000123")
 
     assert response["_meta"]["tool"] == "get_trial_details"
+    assert response["_meta"]["routing_hints"]["requires_identifiers"] == ["nct_id"]
     assert response["result"]["nct_id"] == "NCT00000123"
     assert "message" not in response
 
@@ -149,15 +153,17 @@ async def test_list_tools_use_standard_envelope(monkeypatch: pytest.MonkeyPatch)
         fake_search_publications,
     )
 
-    timeline_response = await get_trial_timelines(condition="NSCLC")
+    timeline_response = await get_trial_timelines(indication="NSCLC")
     publication_response = await search_publications(query="mRNA")
 
     assert timeline_response["count"] == 1
     assert timeline_response["_meta"]["tool"] == "get_trial_timelines"
+    assert timeline_response["_meta"]["output_kind"] == "derived"
     assert timeline_response["results"][0]["nct_id"] == "NCT321"
 
     assert publication_response["count"] == 1
     assert publication_response["_meta"]["tool"] == "search_publications"
+    assert publication_response["_meta"]["routing_hints"]["parameter_aliases"]["term"] == "query"
     assert publication_response["results"][0]["pmid"] == "12345"
     assert publication_response["results"][0]["doi"] == "10.1000/example"
 
@@ -189,6 +195,7 @@ async def test_search_publications_supports_term_and_reports_failures(
     assert response["_meta"]["queried_sources"] == ["pubmed"]
     assert response["_meta"]["requested_filters"]["term"] == "mRNA vaccine"
     assert response["_meta"]["requested_filters"]["indication"] == "NSCLC"
+    assert response["_meta"]["requested_filters"]["effective_query"] == "mRNA vaccine NSCLC"
     assert response["_meta"]["partial_failures"][0]["error"] == "temporary upstream issue"
 
 
@@ -274,6 +281,16 @@ async def test_search_preprints_returns_standard_envelope(
     assert response["_meta"]["source"] == "medrxiv"
     assert response["_meta"]["requested_filters"]["term"] == "mRNA vaccine"
     assert response["_meta"]["requested_filters"]["indication"] == "GBM"
+    assert response["_meta"]["requested_filters"]["effective_query"] == "mRNA vaccine GBM"
     assert response["results"][0]["pmid"] is None
     assert response["results"][0]["doi"] == "10.1101/2024.03.01.123456"
 
+
+@pytest.mark.asyncio
+async def test_describe_tools_returns_structured_catalog() -> None:
+    response = await describe_tools(category="discovery")
+
+    assert response["_meta"]["tool"] == "describe_tools"
+    assert response["_meta"]["source"] == "server_catalog"
+    assert response["count"] >= 1
+    assert any(item["tool_name"] == "search_trials" for item in response["results"])

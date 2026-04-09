@@ -118,8 +118,7 @@ class OpenFDASource(BaseSource):
         max_results: int = 10,
     ) -> list[ApprovedDrug]:
         if self._client is None:
-            logger.warning("OpenFDA source not initialized, skipping")
-            return []
+            raise RuntimeError("OpenFDA source not initialized.")
 
         search_query = _build_search_query(
             condition=indication,
@@ -138,17 +137,16 @@ class OpenFDASource(BaseSource):
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return []
-            logger.error("OpenFDA API error %s for query: %s", exc.response.status_code, search_query)
-            return []
-        except httpx.RequestError:
-            logger.exception("OpenFDA request failed")
-            return []
+            raise RuntimeError(
+                f"OpenFDA search_approved_drugs failed with status {exc.response.status_code}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"OpenFDA request failed: {exc}") from exc
 
         try:
             data = response.json()
-        except ValueError:
-            logger.error("OpenFDA returned non-JSON response")
-            return []
+        except ValueError as exc:
+            raise RuntimeError("OpenFDA returned non-JSON response") from exc
 
         results: list[ApprovedDrug] = []
         for label in data.get("results", []):

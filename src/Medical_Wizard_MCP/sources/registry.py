@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar
 
 from ..models import ApprovedDrug, Publication, TrialDetail, TrialSummary, TrialTimeline
 from .base import BaseSource
@@ -92,6 +92,66 @@ class SourceRegistry:
         ]
         return eligible_sources, list(init_warnings)
 
+    def _source_priority(self, sources: list[BaseSource]) -> dict[str, int]:
+        return {source.name: index for index, source in enumerate(sources)}
+
+    def _completeness_score(self, item: Any) -> int:
+        if hasattr(item, "model_dump"):
+            payload = item.model_dump()
+        elif isinstance(item, dict):
+            payload = item
+        else:
+            return 0
+
+        score = 0
+        for value in payload.values():
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, dict)) and not value:
+                continue
+            score += 1
+        return score
+
+    def _prefer_candidate(self, current: T, candidate: T, source_priority: dict[str, int]) -> bool:
+        current_source = getattr(current, "source", "")
+        candidate_source = getattr(candidate, "source", "")
+        current_rank = source_priority.get(current_source, len(source_priority))
+        candidate_rank = source_priority.get(candidate_source, len(source_priority))
+        if candidate_rank != current_rank:
+            return candidate_rank < current_rank
+        return self._completeness_score(candidate) > self._completeness_score(current)
+
+    def _merge_list_items(
+        self,
+        items: list[T],
+        *,
+        sources: list[BaseSource],
+        key_fn: Callable[[T], str | None],
+    ) -> list[T]:
+        source_priority = self._source_priority(sources)
+        deduped_by_key: dict[str, T] = {}
+        ordered_keys: list[str] = []
+        passthrough_items: list[T] = []
+
+        for item in items:
+            merge_key = key_fn(item)
+            if not merge_key:
+                passthrough_items.append(item)
+                continue
+
+            existing = deduped_by_key.get(merge_key)
+            if existing is None:
+                deduped_by_key[merge_key] = item
+                ordered_keys.append(merge_key)
+                continue
+
+            if self._prefer_candidate(existing, item, source_priority):
+                deduped_by_key[merge_key] = item
+
+        return [deduped_by_key[key] for key in ordered_keys] + passthrough_items
+
     async def search_trials(
         self,
         condition: str,
@@ -134,8 +194,14 @@ class SourceRegistry:
 
             results.extend(outcome)
 
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda trial: getattr(trial, "nct_id", None),
+        )
+
         return ListQueryResult(
-            items=results[:max_results],
+            items=merged_results[:max_results],
             queried_sources=[source.name for source in sources],
             warnings=warnings,
         )
@@ -209,8 +275,14 @@ class SourceRegistry:
 
             results.extend(outcome)
 
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda trial: getattr(trial, "nct_id", None),
+        )
+
         return ListQueryResult(
-            items=results[:max_results],
+            items=merged_results[:max_results],
             queried_sources=[source.name for source in sources],
             warnings=warnings,
         )
@@ -251,8 +323,16 @@ class SourceRegistry:
 
             results.extend(outcome)
 
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda publication: getattr(publication, "pmid", None)
+            or getattr(publication, "doi", None)
+            or getattr(publication, "title", None),
+        )
+
         return ListQueryResult(
-            items=results[:max_results],
+            items=merged_results[:max_results],
             queried_sources=[source.name for source in sources],
             warnings=warnings,
         )
@@ -293,8 +373,15 @@ class SourceRegistry:
 
             results.extend(outcome)
 
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda publication: getattr(publication, "doi", None)
+            or getattr(publication, "title", None),
+        )
+
         return ListQueryResult(
-            items=results[:max_results],
+            items=merged_results[:max_results],
             queried_sources=[source.name for source in sources],
             warnings=warnings,
         )
@@ -337,8 +424,16 @@ class SourceRegistry:
 
             results.extend(outcome)
 
+        merged_results = self._merge_list_items(
+            results,
+            sources=sources,
+            key_fn=lambda drug: getattr(drug, "approval_id", None)
+            or getattr(drug, "generic_name", None)
+            or getattr(drug, "brand_name", None),
+        )
+
         return ListQueryResult(
-            items=results[:max_results],
+            items=merged_results[:max_results],
             queried_sources=[source.name for source in sources],
             warnings=warnings,
         )

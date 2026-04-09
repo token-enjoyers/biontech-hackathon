@@ -287,6 +287,110 @@ def _forecast_rows_from_trials(
     return rows, benchmark_medians
 
 
+async def _analyze_competition_gaps_impl(
+    *,
+    indication: str,
+    include_terminated: bool,
+    tool_name: str,
+) -> dict[str, Any]:
+    active_response = await registry.search_trials(condition=indication, max_results=ANALYSIS_MAX_RESULTS)
+    active_trials = [
+        trial
+        for trial in active_response.items
+        if trial.overall_status not in TERMINAL_STATUSES and trial.overall_status != "COMPLETED"
+    ]
+
+    phase_density = Counter((phase_code(trial.phase) or "UNSPECIFIED") for trial in active_trials)
+    mechanism_density = Counter()
+    for trial in active_trials:
+        for mechanism in _trial_mechanisms(trial):
+            mechanism_density[mechanism] += 1
+
+    warnings = _warning_dicts(active_response.warnings)
+    queried_sources = active_response.queried_sources
+
+    terminated_rows: list[dict[str, Any]] = []
+    terminated_counts: Counter[str] = Counter()
+    if include_terminated:
+        terminated_response = await registry.search_trials(
+            condition=indication,
+            status="TERMINATED",
+            max_results=min(40, ANALYSIS_MAX_RESULTS),
+        )
+        warnings.extend(_warning_dicts(terminated_response.warnings))
+        queried_sources = sorted(set(queried_sources + terminated_response.queried_sources))
+        terminated_details, detail_warnings, detail_sources = await _fetch_details(
+            [trial.nct_id for trial in terminated_response.items[:DETAIL_SAMPLE_SIZE]]
+        )
+        warnings.extend(detail_warnings)
+        queried_sources = sorted(set(queried_sources + detail_sources))
+        detail_map = {detail.nct_id: detail for detail in terminated_details}
+
+        for trial in terminated_response.items:
+            detail = detail_map.get(trial.nct_id)
+            mechanisms = _trial_mechanisms(detail or trial)
+            for mechanism in mechanisms:
+                terminated_counts[mechanism] += 1
+
+            terminated_rows.append(
+                {
+                    "nct_id": trial.nct_id,
+                    "sponsor": trial.lead_sponsor,
+                    "phase": phase_code(trial.phase),
+                    "why_stopped": detail.why_stopped if detail is not None else None,
+                    "intervention": (
+                        detail.interventions[0]
+                        if detail and detail.interventions
+                        else (trial.interventions[0] if trial.interventions else None)
+                    ),
+                }
+            )
+
+    gap_signals = []
+    for mechanism, count in mechanism_density.most_common():
+        if mechanism == "other / unspecified":
+            continue
+        if count > 5:
+            continue
+        terminated_count = terminated_counts.get(mechanism, 0)
+        gap_signals.append(
+            {
+                "mechanism": mechanism,
+                "active_trial_count": count,
+                "signal_strength": infer_signal_strength(count, terminated_count),
+                "terminated_in_this_space": terminated_count,
+            }
+        )
+
+    gap_signals.sort(key=lambda item: (item["active_trial_count"], item["terminated_in_this_space"], item["mechanism"]))
+
+    result = {
+        "analysis_type": "heuristic_gap_scan",
+        "indication": indication,
+        "active_trial_density": {
+            "by_phase": dict(sorted(phase_density.items(), key=lambda item: (-item[1], item[0]))),
+            "by_mechanism": dict(sorted(mechanism_density.items(), key=lambda item: (-item[1], item[0]))),
+        },
+        "terminated_trials": {
+            "count": len(terminated_rows),
+            "trials": terminated_rows[:10],
+        },
+        "gap_signals": gap_signals[:10],
+        "heuristic_basis": "Low-density mechanism areas are highlighted using active-trial counts plus terminated-trial context.",
+    }
+
+    return detail_response(
+        tool_name=tool_name,
+        data_type="competition_gap_analysis",
+        item=result,
+        quality_note="Competition-gap signals are heuristic and combine active-trial density with terminated-trial context.",
+        coverage="Clinical trial registry search results for the requested indication.",
+        queried_sources=queried_sources,
+        warnings=warnings,
+        requested_filters={"indication": indication, "include_terminated": include_terminated},
+    )
+
+
 @mcp.tool()
 async def compare_trials(nct_ids: list[str]) -> dict[str, Any]:
     """Compare 2-5 trials side by side using normalized detail fields."""
@@ -346,7 +450,10 @@ async def get_trial_density(
     group_by: str = "phase",
     status: str | None = None,
 ) -> dict[str, Any]:
-    """Count trials for an indication grouped by phase, intervention type, or sponsor."""
+    """Derived density summary for one indication.
+
+Use this when you need counts by phase, intervention type, or sponsor rather than raw trial rows.
+    """
     group_by = group_by.lower()
     if group_by not in {"phase", "intervention_type", "sponsor"}:
         return detail_response(
@@ -405,97 +512,39 @@ async def get_trial_density(
 
 
 @mcp.tool()
+async def analyze_competition_gaps(
+    indication: str,
+    include_terminated: bool = True,
+) -> dict[str, Any]:
+    """Heuristic gap-analysis tool for one indication.
+
+Use this only when the user wants a gap scan or whitespace-style recommendation. Prefer raw discovery tools when you want the LLM to reason from evidence itself.
+    """
+    return await _analyze_competition_gaps_impl(
+        indication=indication,
+        include_terminated=include_terminated,
+        tool_name="analyze_competition_gaps",
+    )
+
+
+@mcp.tool()
 async def find_whitespaces(
     indication: str,
     include_terminated: bool = True,
 ) -> dict[str, Any]:
-    """Identify low-density mechanism areas and terminated-trial signals for an indication."""
-    active_response = await registry.search_trials(condition=indication, max_results=ANALYSIS_MAX_RESULTS)
-    active_trials = [trial for trial in active_response.items if trial.overall_status not in TERMINAL_STATUSES and trial.overall_status != "COMPLETED"]
+    """Deprecated alias for analyze_competition_gaps.
 
-    phase_density = Counter((phase_code(trial.phase) or "UNSPECIFIED") for trial in active_trials)
-    mechanism_density = Counter()
-    for trial in active_trials:
-        for mechanism in _trial_mechanisms(trial):
-            mechanism_density[mechanism] += 1
-
-    warnings = _warning_dicts(active_response.warnings)
-    queried_sources = active_response.queried_sources
-
-    terminated_rows: list[dict[str, Any]] = []
-    terminated_counts: Counter[str] = Counter()
-    if include_terminated:
-        terminated_response = await registry.search_trials(
-            condition=indication,
-            status="TERMINATED",
-            max_results=min(40, ANALYSIS_MAX_RESULTS),
-        )
-        warnings.extend(_warning_dicts(terminated_response.warnings))
-        queried_sources = sorted(set(queried_sources + terminated_response.queried_sources))
-        terminated_details, detail_warnings, detail_sources = await _fetch_details(
-            [trial.nct_id for trial in terminated_response.items[:DETAIL_SAMPLE_SIZE]]
-        )
-        warnings.extend(detail_warnings)
-        queried_sources = sorted(set(queried_sources + detail_sources))
-        detail_map = {detail.nct_id: detail for detail in terminated_details}
-
-        for trial in terminated_response.items:
-            detail = detail_map.get(trial.nct_id)
-            mechanisms = _trial_mechanisms(detail or trial)
-            for mechanism in mechanisms:
-                terminated_counts[mechanism] += 1
-
-            terminated_rows.append(
-                {
-                    "nct_id": trial.nct_id,
-                    "sponsor": trial.lead_sponsor,
-                    "phase": phase_code(trial.phase),
-                    "why_stopped": detail.why_stopped if detail is not None else None,
-                    "intervention": (detail.interventions[0] if detail and detail.interventions else (trial.interventions[0] if trial.interventions else None)),
-                }
-            )
-
-    whitespace_signals = []
-    for mechanism, count in mechanism_density.most_common():
-        if mechanism == "other / unspecified":
-            continue
-        if count > 5:
-            continue
-        terminated_count = terminated_counts.get(mechanism, 0)
-        whitespace_signals.append(
-            {
-                "mechanism": mechanism,
-                "active_trial_count": count,
-                "signal_strength": infer_signal_strength(count, terminated_count),
-                "terminated_in_this_space": terminated_count,
-            }
-        )
-
-    whitespace_signals.sort(key=lambda item: (item["active_trial_count"], item["terminated_in_this_space"], item["mechanism"]))
-
-    result = {
-        "indication": indication,
-        "active_trial_density": {
-            "by_phase": dict(sorted(phase_density.items(), key=lambda item: (-item[1], item[0]))),
-            "by_mechanism": dict(sorted(mechanism_density.items(), key=lambda item: (-item[1], item[0]))),
-        },
-        "terminated_trials": {
-            "count": len(terminated_rows),
-            "trials": terminated_rows[:10],
-        },
-        "whitespace_signals": whitespace_signals[:10],
-    }
-
-    return detail_response(
+Use `analyze_competition_gaps` for new integrations. This alias is kept for backward compatibility only.
+    """
+    response = await _analyze_competition_gaps_impl(
+        indication=indication,
+        include_terminated=include_terminated,
         tool_name="find_whitespaces",
-        data_type="whitespace_analysis",
-        item=result,
-        quality_note="Whitespace signals are heuristic and combine active-trial density with terminated-trial context.",
-        coverage="Clinical trial registry search results for the requested indication.",
-        queried_sources=queried_sources,
-        warnings=warnings,
-        requested_filters={"indication": indication, "include_terminated": include_terminated},
     )
+    result = response.get("result")
+    if isinstance(result, dict) and "gap_signals" in result and "whitespace_signals" not in result:
+        result["whitespace_signals"] = result["gap_signals"]
+    return response
 
 
 @mcp.tool()
@@ -504,7 +553,10 @@ async def competitive_landscape(
     phase: str | None = None,
     status: str = "RECRUITING",
 ) -> dict[str, Any]:
-    """Summarize sponsors, mechanisms, and saturation for an indication."""
+    """Derived market snapshot for one indication.
+
+Use this when you want sponsor and mechanism concentration rather than raw trial records.
+    """
     response = await registry.search_trials(
         condition=indication,
         phase=phase,
@@ -574,7 +626,7 @@ async def get_recruitment_velocity(
     phase: str | None = None,
     sponsor: str | None = None,
 ) -> dict[str, Any]:
-    """Estimate enrollment velocity for trials in an indication."""
+    """Derived enrollment-velocity estimate for comparable trials."""
     response = await registry.get_trial_timelines(
         condition=indication,
         sponsor=sponsor,
@@ -621,8 +673,11 @@ async def suggest_trial_design(
     indication: str,
     mechanism: str,
 ) -> dict[str, Any]:
-    """Generate a heuristic trial-design blueprint from trial and publication signals."""
-    whitespace = await find_whitespaces(indication=indication, include_terminated=True)
+    """Heuristic draft design recommendation.
+
+Use this only when the user explicitly wants a server-generated recommendation. Prefer raw discovery and evidence tools if the LLM should synthesize the answer itself.
+    """
+    whitespace = await analyze_competition_gaps(indication=indication, include_terminated=True)
     candidate_trials = await registry.search_trials(
         condition=indication,
         intervention=mechanism,
@@ -675,7 +730,7 @@ async def suggest_trial_design(
         else mechanism
     )
 
-    whitespace_signals = ((whitespace.get("result") or {}).get("whitespace_signals") or [])[:2]
+    whitespace_signals = ((whitespace.get("result") or {}).get("gap_signals") or [])[:2]
     whitespace_basis = [
         f"{signal['mechanism']} has only {signal['active_trial_count']} active trials in {indication}"
         for signal in whitespace_signals
@@ -707,6 +762,7 @@ async def suggest_trial_design(
     )
 
     result = {
+        "recommendation_type": "heuristic_draft",
         "indication": indication,
         "mechanism": mechanism,
         "recommended_phase": recommended_phase,
@@ -741,7 +797,10 @@ async def suggest_patient_profile(
     mechanism: str,
     biomarker: str | None = None,
 ) -> dict[str, Any]:
-    """Suggest a patient profile using completed trials and publication signals."""
+    """Heuristic patient-profile recommendation.
+
+Use this only when the user explicitly wants a server-generated profile draft rather than raw evidence.
+    """
     completed_trials = await registry.search_trials(
         condition=indication,
         intervention=mechanism,
@@ -799,6 +858,7 @@ async def suggest_patient_profile(
         )
 
     result = {
+        "recommendation_type": "heuristic_draft",
         "inclusion_criteria": inclusion,
         "exclusion_criteria": unique_nonempty(exclusion),
         "predictive_biomarkers": predictive_biomarkers,
@@ -826,7 +886,7 @@ async def benchmark_trial_design(
     mechanism: str | None = None,
     sponsor: str | None = None,
 ) -> dict[str, Any]:
-    """Benchmark common trial-design patterns for an indication and optional mechanism."""
+    """Derived benchmark of common design patterns across similar trials."""
     _, details, warnings, queried_sources = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
@@ -910,7 +970,7 @@ async def benchmark_eligibility_criteria(
     phase: str | None = None,
     mechanism: str | None = None,
 ) -> dict[str, Any]:
-    """Benchmark recurring inclusion, exclusion, and biomarker criteria."""
+    """Derived benchmark of recurring eligibility and biomarker criteria."""
     _, details, warnings, queried_sources = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
@@ -969,7 +1029,7 @@ async def benchmark_endpoints(
     phase: str | None = None,
     mechanism: str | None = None,
 ) -> dict[str, Any]:
-    """Benchmark primary and secondary endpoint usage in similar trials."""
+    """Derived benchmark of endpoint categories across similar trials."""
     _, details, warnings, queried_sources = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
@@ -1027,7 +1087,10 @@ async def link_trial_evidence(
     include_preprints: bool = True,
     include_approvals: bool = True,
 ) -> dict[str, Any]:
-    """Link a trial to related publications, preprints, and approved-drug context."""
+    """Cross-source evidence bundle for one known trial.
+
+Use this when you already have an NCT ID and want a quick bundle of likely related literature and approvals. The links are query-based associations, not exact citation matching.
+    """
     detail = await registry.get_trial_details(nct_id)
     if detail.item is None:
         return detail_response(
@@ -1079,6 +1142,7 @@ async def link_trial_evidence(
         queried_sources = sorted(set(queried_sources + approval_response.queried_sources))
 
     result = {
+        "link_type": "query_based_association",
         "trial": {
             "nct_id": trial.nct_id,
             "brief_title": trial.brief_title,
@@ -1121,7 +1185,7 @@ async def analyze_patient_segments(
     phase: str | None = None,
     mechanism: str | None = None,
 ) -> dict[str, Any]:
-    """Analyze biomarker and line-of-therapy patient segments in an indication."""
+    """Derived segment summary for biomarkers, disease stage, and line of therapy."""
     _, details, warnings, queried_sources = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
@@ -1190,7 +1254,10 @@ async def forecast_readouts(
     sponsor: str | None = None,
     months_ahead: int = 24,
 ) -> dict[str, Any]:
-    """Forecast upcoming known and estimated trial readouts for an indication."""
+    """Heuristic readout forecast.
+
+Use this only when estimated future dates are acceptable. Prefer timeline tools for raw registered dates without forecast logic.
+    """
     response = await registry.search_trials(
         condition=indication,
         phase=phase,
@@ -1203,6 +1270,7 @@ async def forecast_readouts(
     )
 
     result = {
+        "forecast_type": "known_dates_plus_phase_benchmarks",
         "indication": indication,
         "phase_filter": phase,
         "sponsor_filter": sponsor,
@@ -1229,7 +1297,7 @@ async def track_competitor_assets(
     sponsors: list[str] | None = None,
     mechanism: str | None = None,
 ) -> dict[str, Any]:
-    """Track sponsor assets and pipeline activity within an indication."""
+    """Derived sponsor-asset grouping for one indication."""
     response = await registry.search_trials(
         condition=indication,
         intervention=mechanism,
@@ -1310,7 +1378,7 @@ async def summarize_safety_signals(
     mechanism: str | None = None,
     year_from: int = 2019,
 ) -> dict[str, Any]:
-    """Summarize recurring safety signals from publications, preprints, and labels."""
+    """Derived cross-source summary of recurring safety signals."""
     query = " ".join(part for part in [mechanism, indication, "safety adverse events toxicity"] if part)
     publications = await registry.search_publications(
         query=query,
@@ -1388,7 +1456,7 @@ async def investigator_site_landscape(
     phase: str | None = None,
     sponsor: str | None = None,
 ) -> dict[str, Any]:
-    """Summarize site geography and visible study officials for active trials."""
+    """Derived site and investigator landscape for active trials."""
     _, details, warnings, queried_sources = await _collect_trials_and_details(
         indication=indication,
         phase=phase,
@@ -1454,7 +1522,7 @@ async def watch_indication_signals(
     recent_years: int = 2,
     months_ahead: int = 18,
 ) -> dict[str, Any]:
-    """Create a watchlist-style snapshot of emerging trials, readouts, and publications."""
+    """Derived watchlist snapshot across trials, literature, preprints, and approvals."""
     year_from = max(2018, _intelligence_year_floor(recent_years))
     trials_response = await registry.search_trials(
         condition=indication,
