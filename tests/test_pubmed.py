@@ -115,7 +115,10 @@ async def test_search_publications_two_step_flow(monkeypatch: pytest.MonkeyPatch
     await source.close()
 
     assert sleep_calls == [0.4]
-    assert [call[0] for call in calls] == ["/esearch.fcgi", "/efetch.fcgi"]
+    assert [call[0] for call in calls] == [
+        "/entrez/eutils/esearch.fcgi",
+        "/entrez/eutils/efetch.fcgi",
+    ]
     assert [publication.pmid for publication in results] == ["123", "456"]
     assert results[0].journal == "Nature Medicine"
     assert results[0].pub_date == "2024-09-12"
@@ -150,7 +153,7 @@ async def test_search_publications_returns_empty_list_when_esearch_has_no_result
     await source.close()
 
     assert results == []
-    assert calls == ["/esearch.fcgi"]
+    assert calls == ["/entrez/eutils/esearch.fcgi"]
 
 
 @pytest.mark.asyncio

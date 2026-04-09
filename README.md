@@ -198,6 +198,22 @@ What the PubMed tests currently cover:
 - HTTP failure handling
 - invalid XML handling
 
+Run the live PubMed smoke test and print the normalized output:
+
+```bash
+RUN_LIVE_PUBMED=1 python -m pytest tests/test_pubmed_live.py -s
+```
+
+Optional live-test parameters:
+
+```bash
+RUN_LIVE_PUBMED=1 \
+PUBMED_LIVE_QUERY="personalized cancer vaccine melanoma" \
+PUBMED_LIVE_MAX_RESULTS=5 \
+PUBMED_LIVE_YEAR_FROM=2023 \
+python -m pytest tests/test_pubmed_live.py -s
+```
+
 ## Contributor Guidelines
 
 When adding a new source:
