@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import shutil
 from typing import Any
 from urllib.parse import urlencode
 
@@ -23,6 +26,10 @@ class ClinicalTrialsSource(BaseSource):
     name = "clinicaltrials_gov"
     capabilities = frozenset({"trial_search", "trial_details", "trial_timelines"})
 
+    def __init__(self) -> None:
+        self._client: httpx.AsyncClient | None = None
+        self._prefer_curl = self._env_prefers_curl()
+
     async def initialize(self) -> None:
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
@@ -32,13 +39,20 @@ class ClinicalTrialsSource(BaseSource):
         )
 
     async def close(self) -> None:
-        await self._client.aclose()
+        if self._client is not None:
+            await self._client.aclose()
 
     def _base_headers(self) -> dict[str, str]:
         return {
             "User-Agent": os.getenv("CLINICALTRIALS_USER_AGENT", "medical-wizard-mcp/0.1.0"),
             "Accept": "application/json, text/plain, */*",
         }
+
+    def _env_prefers_curl(self) -> bool:
+        raw = os.getenv("CLINICALTRIALS_PREFER_CURL")
+        if raw is None:
+            return False
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
 
     def _browser_headers(self, params: dict[str, Any]) -> dict[str, str]:
         referer_query = {}
@@ -57,31 +71,130 @@ class ClinicalTrialsSource(BaseSource):
             "Referer": referer,
         }
 
+    def _apply_phase_filter(self, params: dict[str, Any], phase: str) -> None:
+        normalized_phase = phase.upper().replace(" ", "")
+        phase_filter = f"AREA[Phase]{normalized_phase}"
+        existing_filter = params.get("filter.advanced")
+        if existing_filter:
+            params["filter.advanced"] = f"({existing_filter}) AND ({phase_filter})"
+        else:
+            params["filter.advanced"] = phase_filter
+
+    async def _get_json_via_curl(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any],
+        stage: str,
+        allow_not_found: bool = False,
+    ) -> dict[str, Any] | None:
+        curl_path = shutil.which("curl")
+        if not curl_path:
+            raise RuntimeError(
+                f"ClinicalTrials.gov blocked {stage} with status 403 and curl fallback is unavailable. "
+                "Install curl or run from an environment where the Python HTTP client is not blocked."
+            )
+
+        url = f"{BASE_URL}{path}"
+        if params:
+            url = f"{url}?{urlencode(params)}"
+
+        headers = self._browser_headers(params)
+        process = await asyncio.create_subprocess_exec(
+            curl_path,
+            "-sS",
+            "-L",
+            "--compressed",
+            "-H",
+            f"User-Agent: {headers['User-Agent']}",
+            "-H",
+            f"Accept: {headers['Accept']}",
+            "-H",
+            f"Accept-Language: {headers['Accept-Language']}",
+            "-H",
+            f"Referer: {headers['Referer']}",
+            "-w",
+            "\n%{http_code}",
+            url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=35)
+
+        if process.returncode != 0:
+            error = stderr.decode().strip() or f"curl exited with status {process.returncode}"
+            raise RuntimeError(f"ClinicalTrials.gov {stage} curl fallback failed: {error}")
+
+        body, separator, status_line = stdout.rpartition(b"\n")
+        if not separator:
+            raise RuntimeError(
+                f"ClinicalTrials.gov {stage} curl fallback returned an unreadable response"
+            )
+
+        try:
+            http_status = int(status_line.decode().strip())
+        except ValueError as exc:
+            raise RuntimeError(
+                f"ClinicalTrials.gov {stage} curl fallback returned an unreadable status code"
+            ) from exc
+
+        if http_status == 404 and allow_not_found:
+            return None
+        if http_status >= 400:
+            raise RuntimeError(
+                f"ClinicalTrials.gov {stage} curl fallback failed with status {http_status}"
+            )
+
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            snippet = body.decode(errors="replace").strip()[:200] or "empty response"
+            raise RuntimeError(
+                f"ClinicalTrials.gov {stage} curl fallback returned invalid JSON: {snippet}"
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"ClinicalTrials.gov {stage} curl fallback returned unexpected payload shape"
+            )
+        return payload
+
     async def _get_json(
         self,
         path: str,
         *,
         params: dict[str, Any],
         stage: str,
-    ) -> dict[str, Any]:
-        response = await self._client.get(path, params=params)
-        if response.status_code == 403:
-            response = await self._client.get(
+        allow_not_found: bool = False,
+    ) -> dict[str, Any] | None:
+        if self._prefer_curl:
+            return await self._get_json_via_curl(
                 path,
                 params=params,
-                headers=self._browser_headers(params),
+                stage=stage,
+                allow_not_found=allow_not_found,
             )
 
+        if self._client is None:
+            raise RuntimeError("ClinicalTrials.gov client is not initialized")
+
+        response = await self._client.get(path, params=params)
         if response.status_code == 403:
-            raise RuntimeError(
-                f"ClinicalTrials.gov blocked {stage} with status 403. "
-                "This usually indicates upstream bot protection or an egress IP restriction "
-                "for the current LibreChat/server environment."
+            # ClinicalTrials.gov blocks httpx in some environments even with browser headers.
+            # Once we observe that, switch the process to curl to avoid repeated 403s and log spam.
+            self._prefer_curl = True
+            return await self._get_json_via_curl(
+                path,
+                params=params,
+                stage=stage,
+                allow_not_found=allow_not_found,
             )
 
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404 and allow_not_found:
+                return None
             raise RuntimeError(
                 f"ClinicalTrials.gov {stage} failed with status {exc.response.status_code}"
             ) from exc
@@ -250,7 +363,7 @@ class ClinicalTrialsSource(BaseSource):
         }
 
         if phase:
-            params["filter.phase"] = phase.upper().replace(" ", "")
+            self._apply_phase_filter(params, phase)
         if status:
             params["filter.overallStatus"] = status.upper()
         if sponsor:
@@ -264,26 +377,14 @@ class ClinicalTrialsSource(BaseSource):
         ]
 
     async def get_trial_details(self, nct_id: str) -> TrialDetail | None:
-        response = await self._client.get(f"/studies/{nct_id}", headers=self._browser_headers({}))
-        if response.status_code == 404:
+        study = await self._get_json(
+            f"/studies/{nct_id}",
+            params={"format": "json"},
+            stage="get_trial_details",
+            allow_not_found=True,
+        )
+        if study is None:
             return None
-        if response.status_code == 403:
-            raise RuntimeError(
-                "ClinicalTrials.gov blocked get_trial_details with status 403. "
-                "This usually indicates upstream bot protection or an egress IP restriction "
-                "for the current LibreChat/server environment."
-            )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"ClinicalTrials.gov get_trial_details failed with status {exc.response.status_code}"
-            ) from exc
-        try:
-            study = response.json()
-        except ValueError as exc:
-            raise RuntimeError("ClinicalTrials.gov get_trial_details returned invalid JSON") from exc
-
         return TrialDetail(**self._normalize_detail(study))
 
     async def get_trial_timelines(
@@ -302,7 +403,7 @@ class ClinicalTrialsSource(BaseSource):
         if sponsor:
             params["query.term"] = sponsor
         if phase:
-            params["filter.phase"] = phase.upper().replace(" ", "")
+            self._apply_phase_filter(params, phase)
         if status:
             params["filter.overallStatus"] = status.upper()
 

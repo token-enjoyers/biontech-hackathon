@@ -7,6 +7,15 @@ from typing import Any
 
 from Medical_Wizard_MCP.__main__ import registry
 from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
+from Medical_Wizard_MCP.tools.intelligence import (
+    compare_trials,
+    competitive_landscape,
+    find_whitespaces,
+    get_recruitment_velocity,
+    get_trial_density,
+    suggest_patient_profile,
+    suggest_trial_design,
+)
 from Medical_Wizard_MCP.tools.publications import search_preprints, search_publications
 from Medical_Wizard_MCP.tools.search import get_trial_details, search_trials
 from Medical_Wizard_MCP.tools.timelines import get_trial_timelines
@@ -89,6 +98,7 @@ async def main() -> None:
         )
 
         nct_id = None
+        comparison_ids: list[str] = []
         trial_results = trials.get("results") if isinstance(trials, dict) else None
         if isinstance(trial_results, list) and trial_results:
             for item in trial_results:
@@ -98,8 +108,10 @@ async def main() -> None:
                     and isinstance(item.get("nct_id"), str)
                     and item["nct_id"].startswith("NCT")
                 ):
+                    comparison_ids.append(item["nct_id"])
                     nct_id = item["nct_id"]
-                    break
+                    if len(comparison_ids) == 2:
+                        break
 
         if nct_id:
             await _run_case(
@@ -132,6 +144,56 @@ async def main() -> None:
             query="mRNA cancer vaccine GBM",
             year_from=2024,
             max_results=2,
+        )
+
+        if len(comparison_ids) >= 2:
+            await _run_case(
+                "compare_trials",
+                compare_trials,
+                nct_ids=comparison_ids[:2],
+            )
+        else:
+            print("\nSkipping compare_trials because search_trials returned fewer than 2 NCT IDs.")
+
+        await _run_case(
+            "get_trial_density",
+            get_trial_density,
+            indication="NSCLC",
+            group_by="phase",
+        )
+
+        await _run_case(
+            "find_whitespaces",
+            find_whitespaces,
+            indication="NSCLC",
+        )
+
+        await _run_case(
+            "competitive_landscape",
+            competitive_landscape,
+            indication="NSCLC",
+            status="RECRUITING",
+        )
+
+        await _run_case(
+            "get_recruitment_velocity",
+            get_recruitment_velocity,
+            indication="NSCLC",
+        )
+
+        await _run_case(
+            "suggest_trial_design",
+            suggest_trial_design,
+            indication="NSCLC",
+            mechanism="mRNA vaccine",
+        )
+
+        await _run_case(
+            "suggest_patient_profile",
+            suggest_patient_profile,
+            indication="NSCLC",
+            mechanism="mRNA vaccine",
+            biomarker="TMB-high",
         )
 
         await _run_case(
