@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from clinical_trials_mcp.models import Publication, TrialDetail, TrialSummary, TrialTimeline
+from ..models import Publication, TrialDetail, TrialSummary, TrialTimeline
 
 
 class BaseSource(ABC):

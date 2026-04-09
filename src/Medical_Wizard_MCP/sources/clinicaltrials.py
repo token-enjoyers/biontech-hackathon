@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import httpx
 
-from clinical_trials_mcp.models import TrialDetail, TrialSummary, TrialTimeline
-from clinical_trials_mcp.sources.base import BaseSource
+from ..models import TrialDetail, TrialSummary, TrialTimeline
+from .base import BaseSource
 
 BASE_URL = "https://clinicaltrials.gov/api/v2"
 

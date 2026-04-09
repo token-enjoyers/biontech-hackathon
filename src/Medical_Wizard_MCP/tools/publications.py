@@ -1,5 +1,5 @@
-from clinical_trials_mcp.server import mcp
-from clinical_trials_mcp.sources import registry
+from ..server import mcp
+from ..sources import registry
 
 
 @mcp.tool()

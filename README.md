@@ -52,14 +52,6 @@ User question
   -> LLM synthesis
 ```
 
-## Important Note On Naming
-
-The repository is currently in an inconsistent rename state:
-- source files live under `src/Medical_Wizard_MCP/`
-- several imports and packaging settings still reference `clinical_trials_mcp`
-
-When updating code, follow the existing import path used by the codebase until the rename is cleaned up consistently.
-
 ## Available Tools
 
 ### `search_trials`
@@ -152,6 +144,14 @@ Install:
 uv pip install -e ".[dev]"
 ```
 
+If `uv` is not installed:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
 Run the server:
 
 ```bash
@@ -172,10 +172,22 @@ Run the PubMed test suite:
 uv run pytest tests/test_pubmed.py
 ```
 
+Without `uv`:
+
+```bash
+python -m pytest tests/test_pubmed.py
+```
+
 Run all tests:
 
 ```bash
 uv run pytest
+```
+
+Without `uv`:
+
+```bash
+python -m pytest
 ```
 
 What the PubMed tests currently cover:

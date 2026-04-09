@@ -6,12 +6,12 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-from clinical_trials_mcp.server import mcp  # noqa: E402
-from clinical_trials_mcp.sources.clinicaltrials import ClinicalTrialsSource  # noqa: E402
-from clinical_trials_mcp.sources.pubmed import PubMedSource  # noqa: E402
-from clinical_trials_mcp.sources.registry import registry  # noqa: E402
+from .server import mcp  # noqa: E402
+from .sources.clinicaltrials import ClinicalTrialsSource  # noqa: E402
+from .sources.pubmed import PubMedSource  # noqa: E402
+from .sources.registry import registry  # noqa: E402
 
-import clinical_trials_mcp.tools  # noqa: E402, F401 — triggers tool registration
+from . import tools  # noqa: E402, F401 — triggers tool registration
 
 # Register data sources
 registry.register(ClinicalTrialsSource())
