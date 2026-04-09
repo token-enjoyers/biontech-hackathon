@@ -27,6 +27,7 @@ Implemented MCP tools today:
 - `get_trial_details`
 - `get_trial_timelines`
 - `search_publications`
+- `get_mcp_version`
 
 ## Architecture
 
@@ -153,6 +154,7 @@ mcpServers:
 ```bash
 PUBMED_API_KEY=       # increases PubMed rate limit from 3 to 10 req/s
 PUBMED_EMAIL=         # recommended by NCBI for identification
+MCP_VERSION=          # optional explicit server version; defaults to local
 ```
 
 ---

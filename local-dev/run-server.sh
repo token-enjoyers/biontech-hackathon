@@ -12,4 +12,5 @@ fi
 
 MCP_HOST="${MCP_HOST:-127.0.0.1}" \
 MCP_PORT="${MCP_PORT:-8000}" \
+MCP_VERSION="${MCP_VERSION:-local}" \
   .venv/bin/python -m Medical_Wizard_MCP

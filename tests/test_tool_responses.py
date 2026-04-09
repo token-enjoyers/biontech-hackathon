@@ -8,6 +8,7 @@ from Medical_Wizard_MCP.tools.drugs import search_approved_drugs
 from Medical_Wizard_MCP.tools.publications import search_preprints, search_publications
 from Medical_Wizard_MCP.tools.search import get_trial_details, search_trials
 from Medical_Wizard_MCP.tools.timelines import get_trial_timelines
+from Medical_Wizard_MCP.tools.version import get_mcp_version
 
 
 @pytest.mark.asyncio
@@ -276,3 +277,23 @@ async def test_search_preprints_returns_standard_envelope(
     assert response["_meta"]["requested_filters"]["indication"] == "GBM"
     assert response["results"][0]["pmid"] is None
     assert response["results"][0]["doi"] == "10.1101/2024.03.01.123456"
+
+
+@pytest.mark.asyncio
+async def test_get_mcp_version_prefers_env_and_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_VERSION", "v1.2.3")
+    monkeypatch.setenv("TAG_NAME", "v9.9.9")
+
+    response = await get_mcp_version()
+
+    assert response["_meta"]["tool"] == "get_mcp_version"
+    assert response["result"]["version"] == "v1.2.3"
+    assert response["result"]["version_source"] == "MCP_VERSION"
+
+    monkeypatch.delenv("MCP_VERSION", raising=False)
+    monkeypatch.delenv("TAG_NAME", raising=False)
+
+    response = await get_mcp_version()
+
+    assert response["result"]["version"] == "local"
+    assert response["result"]["version_source"] == "fallback"

@@ -19,4 +19,4 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
-CMD ["python", "-m", "clinical_trials_mcp"]
+CMD ["python", "-m", "Medical_Wizard_MCP"]

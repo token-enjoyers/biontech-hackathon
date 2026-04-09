@@ -34,7 +34,7 @@ steps:
       - '--set-secrets'
       - 'API_KEY=api-key:latest'
       - '--set-env-vars'
-      - 'MCP_HOST=0.0.0.0,MCP_PORT=8000'
+      - 'MCP_HOST=0.0.0.0,MCP_PORT=8000,MCP_VERSION=$TAG_NAME'
 
 images:
   - 'europe-west1-docker.pkg.dev/ai-hack26ham-475/docker-repo/clinical-trials-mcp:$TAG_NAME'

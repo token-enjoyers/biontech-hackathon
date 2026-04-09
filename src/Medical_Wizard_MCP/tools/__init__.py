@@ -1,1 +1,1 @@
-from . import drugs, intelligence, publications, search, timelines  # noqa: F401
+from . import drugs, intelligence, publications, search, timelines, version  # noqa: F401
