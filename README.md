@@ -9,7 +9,7 @@ The project is intentionally LLM-first:
 
 `README.md` is the canonical human-facing setup, usage, and testing document. `AGENTS.md` contains repo-specific guidance for coding agents only.
 
-## Table of Contents
+## Table of Contents 
 
 1. [Overview](#overview)
 2. [Architecture](#architecture)
