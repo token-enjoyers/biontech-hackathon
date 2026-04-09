@@ -3,7 +3,7 @@ import re
 from typing import Any
 
 from ..models import TrialSummary
-from ..app import mcp
+from .._mcp import mcp
 from ..sources import registry
 from ._inputs import build_trial_query_variants, coalesce_indication, coalesce_query
 from ._responses import detail_response, list_response

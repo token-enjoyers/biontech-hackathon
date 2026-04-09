@@ -1,6 +1,6 @@
 from typing import Any
 
-from ..app import mcp
+from .._mcp import mcp
 from ..sources import registry
 from ._inputs import coalesce_indication
 from ._intelligence import months_between, months_since

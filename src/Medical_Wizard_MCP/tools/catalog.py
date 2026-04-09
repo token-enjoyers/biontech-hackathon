@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..app import mcp
+from .._mcp import mcp
 from ._responses import list_response
 from ._tool_catalog import list_tool_metadata
 

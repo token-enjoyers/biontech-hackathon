@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from ..app import mcp
+from .._mcp import mcp
 from ..sources import registry
 from ._evidence_extraction import (
     build_document,

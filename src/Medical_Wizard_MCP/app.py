@@ -1,11 +1,4 @@
-import os
-
-from fastmcp import FastMCP
-
+from ._mcp import mcp
 from .server import AuditContextMiddleware
 
-mcp = FastMCP(
-    name="Medical Wizard MCP",
-    version=os.getenv("MCP_VERSION", "local"),
-    middleware=[AuditContextMiddleware()],
-)
+mcp.add_middleware(AuditContextMiddleware())

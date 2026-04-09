@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..app import mcp
+from .._mcp import mcp
 from ..sources import registry
 from ..sources._conference_utils import normalize_conference_series
 from ._evidence_quality import annotate_evidence_quality

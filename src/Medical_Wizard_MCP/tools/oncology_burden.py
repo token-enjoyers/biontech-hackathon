@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..app import mcp
+from .._mcp import mcp
 from ..sources import registry
 from ._inputs import coalesce_indication
 from ._responses import list_response

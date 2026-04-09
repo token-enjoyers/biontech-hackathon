@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..models import ConferenceAbstract, Publication, TrialDetail, TrialSummary
-from ..app import mcp
+from .._mcp import mcp
 from ..sources import registry
 from ._evidence_refs import document_refs_from_models
 from ._evidence_quality import annotate_evidence_quality, summarize_evidence_quality
