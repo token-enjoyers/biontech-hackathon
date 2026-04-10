@@ -629,6 +629,7 @@ uv run pytest
 3. Register the source in `src/Medical_Wizard_MCP/__main__.py`.
 4. Add or update tests for normalization and failure handling.
 
+
 ### When adding a new tool
 
 1. Add the MCP tool in `src/Medical_Wizard_MCP/tools/`.
