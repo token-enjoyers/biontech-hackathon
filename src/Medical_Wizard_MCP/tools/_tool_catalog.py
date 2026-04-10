@@ -427,7 +427,7 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
             "You are still exploring broadly and do not yet know the exact filters that matter.",
             "You need a lightweight landscape summary rather than an auditable include/exclude screen.",
         ],
-        "decision_boundary": "Use this instead of free-form trial synthesis when the final answer should only name trials that pass deterministic screening against verified detail records. Only studies under `included_trials` should be treated as answer-safe; `related_trials` are broader candidates that still need confirmation.",
+        "decision_boundary": "Use this instead of free-form trial synthesis when the final answer should come from deterministic screening against verified detail records. Treat `included_trials` as the primary answer set, noting from `decision_reasons` whether an item is an exact text-confirmed match or a strong detail-verified candidate; `related_trials` still need more follow-up.",
         "choose_instead_of": ["search_trials", "competitive_landscape", "track_competitor_assets"],
         "typical_next_tools": [
             "get_trial_details",

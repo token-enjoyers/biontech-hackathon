@@ -1180,7 +1180,7 @@ async def screen_trial_candidates(
 
 Use this when the user asks for an exact cohort such as "all phase 3 bispecific antibody trials in advanced NSCLC" and hallucination risk matters more than broad recall.
 
-Only studies listed under `included_trials` should be treated as safe-to-name final answers. `related_trials` surface plausible but not fully verified matches, while `excluded_trials` remain the audit trail for clear non-matches.
+`included_trials` hold the primary answer set. They can include both fully verified matches and strong detail-verified candidates when no explicit contradiction is present in the available registry text. `related_trials` remain the follow-up bucket for rows that still need substantially more verification, while `excluded_trials` remain the audit trail for clear non-matches.
     """
     max_results = min(max_results, ANALYSIS_MAX_RESULTS)
     candidate_trials, details, warnings, queried_sources, evidence_trace = await _collect_trials_and_details(
@@ -1264,7 +1264,13 @@ Only studies listed under `included_trials` should be treated as safe-to-name fi
             related_reasons.append(
                 "Related because the registry row looks relevant, but no detailed ClinicalTrials.gov record was available for full verification."
             )
-        if mechanism and not matched_mechanisms and not mechanism_conflict:
+        strong_candidate_without_explicit_mechanism = (
+            detail is not None
+            and bool(mechanism)
+            and not matched_mechanisms
+            and not mechanism_conflict
+        )
+        if mechanism and not matched_mechanisms and not mechanism_conflict and not strong_candidate_without_explicit_mechanism:
             related_reasons.append(
                 "Related because the available trial text does not clearly confirm the requested mechanism filter."
             )
@@ -1299,7 +1305,12 @@ Only studies listed under `included_trials` should be treated as safe-to-name fi
         if phase:
             inclusion_reasons.append("Included because the verified trial phase matches the requested phase filter.")
         if mechanism:
-            inclusion_reasons.append("Included because the verified trial text matches the requested mechanism filter.")
+            if matched_mechanisms:
+                inclusion_reasons.append("Included because the verified trial text matches the requested mechanism filter.")
+            else:
+                inclusion_reasons.append(
+                    "Included as a strong candidate because the verified detailed record otherwise matches the screen and does not show an explicit contradiction to the requested mechanism filter."
+                )
         if patient_segment:
             inclusion_reasons.append("Included because the verified trial text matches the requested patient-segment filter.")
         if not terminal_status:
@@ -1356,8 +1367,9 @@ Only studies listed under `included_trials` should be treated as safe-to-name fi
             "exclude_terminal_by_default": not include_terminated,
             "requires_detail_verification": True,
             "notes": [
-                "Only studies listed under `included_trials` should be named in a final answer unless the user explicitly asks for broader candidates.",
-                "Studies under `related_trials` may be relevant but need follow-up because one or more requested filters could not be fully verified from the available text.",
+                "Studies listed under `included_trials` are the primary answer set and may be named directly in a final answer.",
+                "Some `included_trials` are strong detail-verified candidates rather than exact text-confirmed matches; use `decision_reasons` and `matched_*` fields to phrase that nuance explicitly.",
+                "Studies under `related_trials` may still be relevant but need follow-up because a detailed record is missing or key filters remain too weakly supported.",
                 "Excluded trials are returned to support abstention and transparent auditing rather than broad narrative synthesis.",
             ],
         },
@@ -1390,7 +1402,7 @@ Only studies listed under `included_trials` should be treated as safe-to-name fi
     if not included_trials:
         if related_trials:
             result["abstention_note"] = (
-                "No trials satisfied all deterministic inclusion criteria. Prefer describing `related_trials` as plausible candidates that still need confirmation rather than presenting them as verified matches."
+                "No detail-verified primary-answer trials were found. Prefer describing `related_trials` as plausible candidates that still need confirmation rather than presenting them as strong screened matches."
             )
         else:
             result["abstention_note"] = (
@@ -1401,7 +1413,7 @@ Only studies listed under `included_trials` should be treated as safe-to-name fi
         tool_name="screen_trial_candidates",
         data_type="trial_candidate_screen",
         item=result,
-        quality_note="This tool keeps a conservative included set for answer-safe trial naming, but it now also surfaces related candidates when the available evidence looks relevant without fully satisfying every verification step.",
+        quality_note="This tool keeps a detail-verified primary answer set, while also allowing strong candidates into `included_trials` when the registry text supports the overall fit without showing an explicit contradiction.",
         coverage="ClinicalTrials.gov trial-search rows plus detailed records for deterministic screening against the requested filters.",
         queried_sources=queried_sources,
         warnings=warnings,
@@ -1411,7 +1423,7 @@ Only studies listed under `included_trials` should be treated as safe-to-name fi
             _trace_step(
                 "screen_trial_candidates",
                 sources=queried_sources,
-                note="Applied deterministic inclusion and exclusion rules to the verified trial detail set and separated answer-safe included trials from audit-only exclusions.",
+                note="Applied deterministic inclusion and exclusion rules to the verified trial detail set, promoting strong detail-verified candidates into the primary answer set when no explicit contradiction was detected.",
                 filters={
                     "indication": indication,
                     "phase": phase,

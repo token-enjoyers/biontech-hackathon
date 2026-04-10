@@ -424,7 +424,7 @@ This materially improves recall for named studies whose latest evidence is index
 
 #### `screen_trial_candidates`
 
-`screen_trial_candidates` is the conservative anti-hallucination path for narrow trial-set questions.
+`screen_trial_candidates` is the structured anti-hallucination path for narrow trial-set questions.
 
 It:
 - starts from registry candidates for the requested indication and optional phase / sponsor filters
@@ -433,10 +433,11 @@ It:
 - returns `included_trials`, `related_trials`, and `excluded_trials` with explicit decision reasons
 
 Important usage guidance:
-- only studies under `included_trials` should be named in a final answer by an attached LLM
-- `related_trials` are plausible candidates that were not fully confirmed against all requested filters and should be presented as follow-up leads, not as verified matches
+- studies under `included_trials` are the primary answer set for an attached LLM and may include both exact text-confirmed matches and strong detail-verified candidates
+- when an `included_trials` item is a strong candidate rather than an exact text-confirmed match, the nuance is carried in `decision_reasons` and the `matched_*` fields
+- `related_trials` are plausible candidates that still need materially more follow-up, usually because the detailed record is missing or the remaining support is too weak
 - `excluded_trials` are meant for auditability, abstention, and explaining why borderline candidates were left out
-- the tool is still conservative for final naming, but it now exposes borderline candidates instead of hiding them completely
+- the tool stays evidence-bound, but it is no longer so strict that good expert-review candidates disappear from the main result set
 
 #### `search_conference_abstracts`
 
