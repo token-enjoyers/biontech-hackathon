@@ -32,7 +32,7 @@ MECHANISM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
             r"\b(?:egfr|c[- ]?met|met|pd-1|pd1|pd-l1|pdl1|vegf|vegf-a|il-2|il2)\s*(?:x|×|/)\s*"
             r"(?:egfr|c[- ]?met|met|pd-1|pd1|pd-l1|pdl1|vegf|vegf-a|il-2|il2)\b|"
             r"\b(?:amivantamab|ivonescimab|zenocutuzumab|epcoritamab|glofitamab|"
-            r"mosunetuzumab|odronextamab|teclistamab|elranatamab)\b",
+            r"mosunetuzumab|odronextamab|teclistamab|elranatamab|ak104|cadonilimab|bl-b01d1)\b",
             re.I,
         ),
         "bispecific antibody",

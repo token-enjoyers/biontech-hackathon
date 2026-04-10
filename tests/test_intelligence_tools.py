@@ -679,6 +679,28 @@ async def test_screen_trial_candidates_returns_included_and_excluded_sets_with_r
         primary_outcomes=["Overall survival"],
         enrollment_count=150,
     )
+    alias_bispecific_trial = TrialSummary(
+        source="clinicaltrials_gov",
+        nct_id="NCT10000007",
+        brief_title="AK104 vs sugemalimab in unresectable locally advanced NSCLC",
+        phase="Phase 3",
+        overall_status="RECRUITING",
+        lead_sponsor="Akeso",
+        interventions=["AK104", "sugemalimab"],
+        primary_outcomes=["Overall survival"],
+        enrollment_count=320,
+    )
+    strong_candidate_trial = TrialSummary(
+        source="clinicaltrials_gov",
+        nct_id="NCT10000008",
+        brief_title="Investigational antibody therapy in advanced metastatic NSCLC",
+        phase="Phase 3",
+        overall_status="RECRUITING",
+        lead_sponsor="Example Sponsor",
+        interventions=["investigational antibody therapy"],
+        primary_outcomes=["Overall survival"],
+        enrollment_count=260,
+    )
 
     detail_map = {
         "NCT10000001": TrialDetail(
@@ -726,6 +748,24 @@ async def test_screen_trial_candidates_returns_included_and_excluded_sets_with_r
             study_type="INTERVENTIONAL",
             conditions=["NSCLC"],
         ),
+        "NCT10000007": TrialDetail(
+            **alias_bispecific_trial.model_dump(),
+            official_title="A phase 3 study of AK104 in unresectable locally advanced or metastatic NSCLC",
+            eligibility_criteria="Adults with unresectable locally advanced or metastatic NSCLC.",
+            arms=["AK104 arm", "Sugemalimab arm"],
+            secondary_outcomes=["Progression-free survival"],
+            study_type="INTERVENTIONAL",
+            conditions=["NSCLC"],
+        ),
+        "NCT10000008": TrialDetail(
+            **strong_candidate_trial.model_dump(),
+            official_title="A phase 3 study of investigational antibody therapy in advanced or metastatic NSCLC",
+            eligibility_criteria="Adults with advanced or metastatic NSCLC.",
+            arms=["Investigational antibody arm", "Standard of care arm"],
+            secondary_outcomes=["Progression-free survival"],
+            study_type="INTERVENTIONAL",
+            conditions=["NSCLC"],
+        ),
     }
 
     async def fake_search_trials(**_: object) -> ListQueryResult[TrialSummary]:
@@ -739,6 +779,8 @@ async def test_screen_trial_candidates_returns_included_and_excluded_sets_with_r
                 phase_mismatch_trial,
                 non_bispecific_trial,
                 ambiguous_trial,
+                alias_bispecific_trial,
+                strong_candidate_trial,
             ],
         )
 
@@ -759,15 +801,17 @@ async def test_screen_trial_candidates_returns_included_and_excluded_sets_with_r
         patient_segment="advanced metastatic NSCLC",
     )
 
-    assert response["result"]["summary"]["candidate_count"] == 6
-    assert response["result"]["summary"]["included_count"] == 1
+    assert response["result"]["summary"]["candidate_count"] == 8
+    assert response["result"]["summary"]["included_count"] == 3
     assert response["result"]["summary"]["related_count"] == 1
     assert response["result"]["summary"]["excluded_count"] == 4
-    assert response["result"]["included_trials"][0]["nct_id"] == "NCT10000001"
-    assert response["result"]["included_trials"][0]["matched_mechanism_labels"] == ["bispecific antibody"]
-    assert response["result"]["included_trials"][0]["source_refs"][0]["id"] == "NCT10000001"
+    included_by_id = {item["nct_id"]: item for item in response["result"]["included_trials"]}
+    assert included_by_id["NCT10000001"]["matched_mechanism_labels"] == ["bispecific antibody"]
+    assert included_by_id["NCT10000001"]["source_refs"][0]["id"] == "NCT10000001"
+    assert included_by_id["NCT10000007"]["matched_mechanism_labels"] == ["bispecific antibody"]
+    assert "strong candidate" in " ".join(included_by_id["NCT10000008"]["decision_reasons"]).lower()
     assert response["result"]["related_trials"][0]["nct_id"] == "NCT10000006"
-    assert "does not clearly confirm the requested mechanism filter" in " ".join(
+    assert "no detailed clinicaltrials.gov record was available" in " ".join(
         response["result"]["related_trials"][0]["decision_reasons"]
     ).lower()
     excluded_by_id = {item["nct_id"]: item for item in response["result"]["excluded_trials"]}
