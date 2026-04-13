@@ -15,7 +15,7 @@ LIST_RESPONSE = {
                     "briefTitle": "Example Lung Cancer Trial",
                 },
                 "statusModule": {"overallStatus": "RECRUITING"},
-                "sponsorCollaboratorsModule": {"leadSponsor": {"name": "BioNTech"}},
+                "sponsorCollaboratorsModule": {"leadSponsor": {"name": "Company"}},
                 "designModule": {"phases": ["PHASE2"]},
             }
         }
@@ -174,7 +174,7 @@ async def test_get_trial_details_uses_shared_curl_transport_after_403(
                 "briefTitle": "Example Lung Cancer Trial",
             },
             "statusModule": {"overallStatus": "RECRUITING"},
-            "sponsorCollaboratorsModule": {"leadSponsor": {"name": "BioNTech"}},
+            "sponsorCollaboratorsModule": {"leadSponsor": {"name": "Company"}},
             "designModule": {"phases": ["PHASE2"]},
             "armsInterventionsModule": {"armGroups": []},
             "outcomesModule": {"secondaryOutcomes": []},
@@ -234,11 +234,11 @@ def test_apply_phase_filter_uses_supported_advanced_query() -> None:
 
 def test_apply_phase_filter_composes_with_existing_advanced_filter() -> None:
     source = ClinicalTrialsSource()
-    params = {"filter.advanced": "AREA[LeadSponsorName]BioNTech"}
+    params = {"filter.advanced": "AREA[LeadSponsorName]Company"}
 
     source._apply_phase_filter(params, "PHASE2")
 
-    assert params["filter.advanced"] == "(AREA[LeadSponsorName]BioNTech) AND (AREA[Phase]PHASE2)"
+    assert params["filter.advanced"] == "(AREA[LeadSponsorName]Company) AND (AREA[Phase]PHASE2)"
 
 
 def test_env_prefers_curl_respects_false_values(monkeypatch: pytest.MonkeyPatch) -> None:

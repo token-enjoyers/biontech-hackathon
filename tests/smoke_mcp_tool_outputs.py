@@ -93,7 +93,7 @@ async def main() -> None:
             "search_trials",
             search_trials,
             condition="lung cancer",
-            sponsor="BioNTech",
+            sponsor="Company",
             max_results=2,
         )
 

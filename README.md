@@ -188,7 +188,7 @@ User question
 
 ```bash
 git clone <repo-url>
-cd biontech-hackathon
+cd Company-hackathon
 uv sync --dev
 ```
 
@@ -295,11 +295,11 @@ Notes:
 
 ## Authentication
 
-The current runtime creates the shared `FastMCP` instance in [app.py](/Users/jannikmuller/PhpstormProjects/biontech-hackathon/src/Medical_Wizard_MCP/app.py) without an attached auth provider, so local streamable-HTTP development does not require JWT configuration today.
+The current runtime creates the shared `FastMCP` instance in [app.py](/Users/jannikmuller/PhpstormProjects/Company-hackathon/src/Medical_Wizard_MCP/app.py) without an attached auth provider, so local streamable-HTTP development does not require JWT configuration today.
 
 Current behavior:
 - runtime auth enforcement: disabled
-- bearer-token test helper: still present in [tests/conftest.py](/Users/jannikmuller/PhpstormProjects/biontech-hackathon/tests/conftest.py)
+- bearer-token test helper: still present in [tests/conftest.py](/Users/jannikmuller/PhpstormProjects/Company-hackathon/tests/conftest.py)
 - optional secret env var for those tests: `JWT_SECRET`
 
 If you want parity with those tests, export a local secret before running them:
@@ -472,7 +472,7 @@ This tool is intentionally snapshot-based. It filters the currently retrievable 
 
 ## Data Sources
 
-Currently registered sources in [src/Medical_Wizard_MCP/__main__.py](/Users/jannikmuller/PhpstormProjects/biontech-hackathon/src/Medical_Wizard_MCP/__main__.py):
+Currently registered sources in [src/Medical_Wizard_MCP/__main__.py](/Users/jannikmuller/PhpstormProjects/Company-hackathon/src/Medical_Wizard_MCP/__main__.py):
 
 | Source | Role | Main capabilities |
 |---|---|---|
@@ -500,7 +500,7 @@ Current dedupe behavior is identifier-based where possible:
 
 ## Models
 
-Shared normalized models live in [src/Medical_Wizard_MCP/models/trials.py](/Users/jannikmuller/PhpstormProjects/biontech-hackathon/src/Medical_Wizard_MCP/models/trials.py).
+Shared normalized models live in [src/Medical_Wizard_MCP/models/trials.py](/Users/jannikmuller/PhpstormProjects/Company-hackathon/src/Medical_Wizard_MCP/models/trials.py).
 
 Current public data models:
 
@@ -656,7 +656,7 @@ uv run pytest
 - Audit tools only operate on directly available text such as registry fields, abstracts, and labels.
 - Conference retrieval is useful but inherently noisier than PubMed literature search.
 - `estimate_commercial_opportunity_proxy` is a prioritization proxy, not a revenue model.
-- Source coverage remains public-source-only; no internal BioNTech systems or proprietary conference feeds are integrated.
+- Source coverage remains public-source-only; no internal Company systems or proprietary conference feeds are integrated.
 - Some heuristics in `intelligence.py` and `_intelligence.py` are oncology-focused and should be treated as lightweight assists, not decision engines.
 
 ---

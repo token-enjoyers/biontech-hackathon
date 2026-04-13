@@ -16,7 +16,7 @@ def test_trial_summary_does_not_include_openfda_only_fields() -> None:
         brief_title="Example trial",
         phase="Phase 2",
         overall_status="RECRUITING",
-        lead_sponsor="BioNTech",
+        lead_sponsor="Company",
         interventions=["BNT111"],
         primary_outcomes=["ORR"],
         enrollment_count=42,

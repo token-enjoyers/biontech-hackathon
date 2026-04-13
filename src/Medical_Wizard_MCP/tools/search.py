@@ -49,7 +49,7 @@ Args:
     condition: Backward-compatible alias for indication
     phase: Trial phase — one of EARLY_PHASE1, PHASE1, PHASE2, PHASE3, PHASE4
     status: Recruitment status — one of RECRUITING, NOT_YET_RECRUITING, ACTIVE_NOT_RECRUITING, COMPLETED, TERMINATED, WITHDRAWN, SUSPENDED
-    sponsor: Sponsor organization name (e.g. "Merck", "BioNTech", "Pfizer")
+    sponsor: Sponsor organization name (e.g. "Merck", "Company", "Pfizer")
     intervention: Drug or therapy name (e.g. "pembrolizumab", "mRNA vaccine")
     max_results: Number of results (default 10, max 20)
     """

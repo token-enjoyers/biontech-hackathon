@@ -36,7 +36,7 @@ STUDY_1 = {
         },
         "conditionsModule": {"conditions": ["Lung Cancer", "NSCLC"]},
         "sponsorCollaboratorsModule": {
-            "leadSponsor": {"name": "BioNTech SE", "class": "INDUSTRY"}
+            "leadSponsor": {"name": "Company SE", "class": "INDUSTRY"}
         },
         "interventionsModule": {
             "interventions": [{"type": "BIOLOGICAL", "name": "BNT111"}]
@@ -73,7 +73,7 @@ STUDY_2 = {
         },
         "conditionsModule": {"conditions": ["Colorectal Cancer"]},
         "sponsorCollaboratorsModule": {
-            "leadSponsor": {"name": "BioNTech SE", "class": "INDUSTRY"}
+            "leadSponsor": {"name": "Company SE", "class": "INDUSTRY"}
         },
         "interventionsModule": {
             "interventions": [{"type": "BIOLOGICAL", "name": "BNT122"}]
@@ -140,7 +140,7 @@ async def test_search_trials_maps_response() -> None:
     check("phase PHASE2 → 'Phase 2'", trials[0].phase == "Phase 2")
     check("phase multi-phase → 'Phase 1/Phase 2'", trials[1].phase == "Phase 1/Phase 2")
     check("overall_status", trials[0].overall_status == "RECRUITING")
-    check("lead_sponsor", trials[0].lead_sponsor == "BioNTech SE")
+    check("lead_sponsor", trials[0].lead_sponsor == "Company SE")
     check("interventions list", trials[0].interventions == ["BNT111"])
     check("primary_outcomes", trials[0].primary_outcomes == ["Overall Response Rate"])
     check("enrollment_count", trials[0].enrollment_count == 120)
@@ -160,7 +160,7 @@ async def test_search_trials_optional_filters() -> None:
         "melanoma",
         phase="phase 2",
         status="recruiting",
-        sponsor="BioNTech",
+        sponsor="Company",
         intervention="BNT111",
     )
     await source.close()
@@ -170,7 +170,7 @@ async def test_search_trials_optional_filters() -> None:
 
     check("filter.phase uppercased + no spaces", captured.get("filter.phase") == "PHASE2")
     check("filter.overallStatus uppercased", captured.get("filter.overallStatus") == "RECRUITING")
-    check("query.term for sponsor", captured.get("query.term") == "BioNTech")
+    check("query.term for sponsor", captured.get("query.term") == "Company")
     check("query.intr for intervention", captured.get("query.intr") == "BNT111")
 
 
@@ -244,13 +244,13 @@ async def test_get_trial_timelines_sponsor_filter() -> None:
         return httpx.Response(200, json={"studies": []})
 
     source = _make_source(handler)
-    await source.get_trial_timelines("lung cancer", sponsor="BioNTech")
+    await source.get_trial_timelines("lung cancer", sponsor="Company")
     await source.close()
 
     print("Query params sent to API:")
     print(json.dumps(captured, indent=2))
 
-    check("query.term for sponsor", captured.get("query.term") == "BioNTech")
+    check("query.term for sponsor", captured.get("query.term") == "Company")
 
 
 async def test_missing_fields_graceful() -> None:

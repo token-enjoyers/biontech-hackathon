@@ -60,7 +60,7 @@ TRIAL_B = TrialSummary(
     brief_title="mRNA vaccine monotherapy in NSCLC",
     phase="Phase 1",
     overall_status="COMPLETED",
-    lead_sponsor="BioNTech",
+    lead_sponsor="Company",
     interventions=["mRNA vaccine"],
     primary_outcomes=["Safety and tolerability"],
     enrollment_count=60,
@@ -137,7 +137,7 @@ ROSETTA_DETAIL = TrialDetail(
     official_title="A phase 3 study of ROSETTA-Lung in advanced NSCLC",
     phase="Phase 3",
     overall_status="COMPLETED",
-    lead_sponsor="BioNTech",
+    lead_sponsor="Company",
     interventions=["BNT327"],
     primary_outcomes=["Overall survival"],
     enrollment_count=420,
@@ -861,7 +861,7 @@ async def test_asset_dossier_surfaces_cross_source_queries_and_counts(
     monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_conference_abstracts", fake_search_conference_abstracts)
     monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_approved_drugs", fake_search_approved_drugs)
 
-    response = await asset_dossier(asset="mRNA vaccine", indication="NSCLC", sponsor="BioNTech")
+    response = await asset_dossier(asset="mRNA vaccine", indication="NSCLC", sponsor="Company")
 
     assert "mRNA vaccine NSCLC" in response["result"]["queries_used"]["publication_queries"]
     assert "mRNA vaccine NSCLC" in captured_publication_queries
@@ -899,7 +899,7 @@ async def test_burden_vs_trial_footprint_maps_subtype_to_parent_site(
     monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.search_trials", fake_search_trials)
     monkeypatch.setattr("Medical_Wizard_MCP.tools.intelligence.registry.get_trial_details", fake_get_trial_details)
 
-    response = await burden_vs_trial_footprint(indication="NSCLC", sponsor="BioNTech")
+    response = await burden_vs_trial_footprint(indication="NSCLC", sponsor="Company")
 
     assert captured_burden_filters["site"] == "Lung"
     assert response["result"]["burden_site_used"] == "Lung"

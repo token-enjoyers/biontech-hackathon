@@ -38,7 +38,7 @@ TRIAL_ACTIVE = TrialSummary(
     brief_title="mRNA vaccine plus pembrolizumab in NSCLC",
     phase="Phase 2",
     overall_status="RECRUITING",
-    lead_sponsor="BioNTech",
+    lead_sponsor="Company",
     interventions=["mRNA vaccine", "pembrolizumab"],
     primary_outcomes=["Objective response rate"],
     enrollment_count=120,
@@ -349,7 +349,7 @@ def _patch_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 TOOL_CASES = [
-    ("search_trials", lambda: search_trials(condition="NSCLC", sponsor="BioNTech"), "results"),
+    ("search_trials", lambda: search_trials(condition="NSCLC", sponsor="Company"), "results"),
     ("get_trial_details", lambda: get_trial_details("NCT10000001"), "result"),
     (
         "get_trial_timelines",

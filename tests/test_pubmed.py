@@ -41,7 +41,7 @@ PUBMED_XML = """<?xml version="1.0" encoding="UTF-8"?>
             <LastName>Smith</LastName>
           </Author>
           <Author>
-            <CollectiveName>BioNTech Study Group</CollectiveName>
+            <CollectiveName>Company Study Group</CollectiveName>
           </Author>
         </AuthorList>
       </Article>
@@ -135,7 +135,7 @@ async def test_search_publications_two_step_flow(monkeypatch: pytest.MonkeyPatch
     assert [publication.pmid for publication in results] == ["123", "456"]
     assert results[0].journal == "Nature Medicine"
     assert results[0].pub_date == "2024-09-12"
-    assert results[0].authors == ["Alice Smith", "BioNTech Study Group"]
+    assert results[0].authors == ["Alice Smith", "Company Study Group"]
     assert results[0].doi == "10.1000/example-doi"
     assert results[0].mesh_terms == ["Vaccines, mRNA", "Lung Neoplasms"]
     assert (
