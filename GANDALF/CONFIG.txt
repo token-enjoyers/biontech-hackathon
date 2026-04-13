@@ -1,0 +1,20 @@
+Name: Gandalf | Company Medial Wizard
+
+Kategorie: Forschung & Entwicklung
+
+Anweisungen: <siehe system-prompt.txt>
+
+KI-Modell: GPT 5.4
+
+MCP-Server: Medical Wizard MCP (all tools enabled)
+
+Artefakte: Artefakte aktivieren
+
+Anweisungen für shadcn/ui-Komponenten einschließen: enabled
+
+Ansprechpartner-Kontakt.Name: Julian Friedemann | TokenEnjoyers
+
+Ansprechpartner-Kontakt.Email: julian@luvlabs.de
+
+
+

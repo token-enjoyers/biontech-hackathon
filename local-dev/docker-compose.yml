@@ -1,0 +1,14 @@
+services:
+  medical-wizard-mcp:
+    env_file:
+      - ../.env
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: medical-wizard-mcp
+    ports:
+      - "8000:8000"
+    environment:
+      PUBMED_API_KEY: ${PUBMED_API_KEY:-}
+      PUBMED_EMAIL: ${PUBMED_EMAIL:-}
+    restart: unless-stopped

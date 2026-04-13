@@ -1,0 +1,40 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/ai-hack26ham-475/docker-repo/clinical-trials-mcp:$TAG_NAME'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'europe-west1-docker.pkg.dev/ai-hack26ham-475/docker-repo/clinical-trials-mcp:$TAG_NAME'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'clinical-trials-mcp'
+      - '--image'
+      - 'europe-west1-docker.pkg.dev/ai-hack26ham-475/docker-repo/clinical-trials-mcp:$TAG_NAME'
+      - '--region'
+      - 'europe-west1'
+      - '--port'
+      - '8000'
+      - '--memory'
+      - '1Gi'
+      - '--timeout'
+      - '3600'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'FASTMCP_HOST=0.0.0.0,FASTMCP_PORT=8000,MCP_VERSION=$TAG_NAME,BIGQUERY_PROJECT_ID=ai-hack26ham-475,BIGQUERY_DATASET=illnesses,BIGQUERY_ONCOLOGY_VIEW=oncology_burden_search,BIGQUERY_LOCATION=US'
+      - '--set-secrets'
+      - 'JWT_SECRET=JWT_SECRET:latest'
+
+images:
+  - 'europe-west1-docker.pkg.dev/ai-hack26ham-475/docker-repo/clinical-trials-mcp:$TAG_NAME'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
